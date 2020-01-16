@@ -216,12 +216,13 @@ static void IRAM_ATTR isr_EncoderRight()
 static void
 periodic_controller()
 {
+  const double k = (M_PI/6.0)*1000.0/(TIME_CONTROLLER); //constante pra converter de pulsos/s para rad/s
   float pwm[2];
   struct Encoder_data enc_datas[2];
   int64_t old_pulse_counter[2] = {0, 0};
-  double omega_beta[2] = {0.0, 0.0};    //por contagem de pulsos=> dt fixo qtd pulsos variavel
+  float erro[2];
+  float kp;
 
-  const double k = (M_PI/6.0)*1000.0/(TIME_CONTROLLER); //constante pra converter de pulsos/s para rad/s
   int i;
   TickType_t xLastWakeTime = xTaskGetTickCount();
   while(1)
@@ -245,14 +246,13 @@ periodic_controller()
       continue;
     }
 
-    //controlador FeedForWard
     for(i = 0; i < 2; i++)
     {
-      pwm[i]  = coefL[F_IS_NEG(omega_ref[i])].alpha*omega_ref[i]*omega_max  +
-                coefL[F_IS_NEG(omega_ref[i])].beta*(omega_ref[i]  != 0 );
+      erro[i] = omega_ref[i]*4000.0 - omega_current[i];
+      pwm[i]  = (erro[i]*1 )/4000.0;
+    //   pwm[i]  = coefL[F_IS_NEG(omega_ref[i])].alpha*omega_ref[i]*omega_max  +
+    //             coefL[F_IS_NEG(omega_ref[i])].beta*(omega_ref[i]  != 0 );
     }
-
-    //aplicar sinal de controle
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
   }
 }
