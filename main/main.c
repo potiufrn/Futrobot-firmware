@@ -40,7 +40,7 @@
 
 // #define DEVICE_NAME "ESP_ROBO_TEST"
 // #define DEVICE_NAME "ESP_ROBO_1"
-#define DEVICE_NAME "ESP_ROBO_2"
+#define DEVICE_NAME "ESP_ROBO_4"
 
 #define GPIO_OUTPUT_PIN_SEL ((1ULL << GPIO_STBY)      | \
                              (1ULL << GPIO_A1N1_LEFT) | \
@@ -82,7 +82,7 @@ static void func_identify(const uint8_t options,
 static xQueueHandle bt_queue = NULL;
 static xQueueHandle encoder_queue[2] = {NULL,NULL};
 
-static bool bypass_controller = false;
+static bool bypass_controller = true;
 
 struct CoefLine coefL[2];       //coef. das retas PWM(omega) para o motor esquerdo
 struct CoefLine coefR[2];       //coef. das retas PWM(omega) para o motor direito
@@ -190,8 +190,6 @@ static void IRAM_ATTR isr_EncoderLeft()
 }
 static void IRAM_ATTR isr_EncoderRight()
 {
-  // {0, -1, 1, 2, 1, 0, 2, -1, -1, 2, 0, 1, 2, 1, -1, 0};
-  //{ 0,-1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
   static int8_t  lookup_table[] = { 0,-1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
   static uint8_t  enc_v = 0;
   static uint32_t reg_read;
@@ -221,38 +219,49 @@ periodic_controller()
   struct Encoder_data enc_datas[2];
   int64_t old_pulse_counter[2] = {0, 0};
   float erro[2];
-  float kp;
+
+  float kp[2] = {0.1453846154, 0.1359633028}; // kp para testes
+
+  uint16_t countVelZero[2] = {500/TIME_CONTROLLER, 500/TIME_CONTROLLER}; //numero de contagem equivalente a 500ms no ciclo do controle
 
   int i;
   TickType_t xLastWakeTime = xTaskGetTickCount();
   while(1)
   {
     vTaskDelayUntil( &xLastWakeTime, TIME_CONTROLLER/portTICK_PERIOD_MS);
+
     for(i = 0; i < 2; i++)
     {
       if(xQueueReceive(encoder_queue[i], &enc_datas[i], 0) == 0) //buffer vazio
       {
-        omega_current[i] = 0.0;
+        countVelZero[i]--;
+        if(countVelZero[i] <= 0)
+        {
+          omega_current[i] = 0;
+        }
       }else{
+        countVelZero[i]   = 1000/TIME_CONTROLLER;
         omega_current[i]  = (enc_datas[i].pulse_counter - old_pulse_counter[i])*k;//*0.5 + omega_beta[LEFT]*0.5;
         old_pulse_counter[i] = enc_datas[i].pulse_counter;
       }
-     }
+    }
 
     if(bypass_controller)
     {
-      //talvez colocar um taskYield aqui para permitir troca de contexto para outra trask executar
       func_controlSignal(omega_ref[LEFT], omega_ref[RIGHT]);
       continue;
     }
 
+    memset(pwm, 0, 2*sizeof(float));
     for(i = 0; i < 2; i++)
     {
-      erro[i] = omega_ref[i]*4000.0 - omega_current[i];
-      pwm[i]  = (erro[i]*1 )/4000.0;
-    //   pwm[i]  = coefL[F_IS_NEG(omega_ref[i])].alpha*omega_ref[i]*omega_max  +
-    //             coefL[F_IS_NEG(omega_ref[i])].beta*(omega_ref[i]  != 0 );
+      erro[i] = omega_ref[i]*omega_max - omega_current[i];
+      pwm[i]  = (erro[i]*kp[i])/omega_max;
+
+      pwm[i]  += coefL[F_IS_NEG(omega_ref[i])].alpha*omega_ref[i]*omega_max  +
+                 coefL[F_IS_NEG(omega_ref[i])].beta*(omega_ref[i]  != 0 );
     }
+
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
   }
 }
@@ -262,17 +271,14 @@ periodic_controller()
 static void func_controlSignal(const float pwmL,const float pwmR)
 {
   #define SAT(x) (((x) > 1.0)?1.0:(x))
-
   static bool front[2]  = {false, false};
   front[LEFT]  = !F_IS_NEG(pwmL);
   front[RIGHT] = !F_IS_NEG(pwmR);
 
-  gpio_set_level(GPIO_STBY, 0);
-  gpio_set_level(GPIO_A1N1_LEFT, !front[LEFT]);
-  gpio_set_level(GPIO_A1N2_LEFT, front[LEFT]);
-  //set modo de rotacao do motor direito
-  gpio_set_level(GPIO_B1N1_RIGHT, !front[RIGHT]);
-  gpio_set_level(GPIO_B1N2_RIGHT, front[RIGHT]);
+
+  REG_WRITE(GPIO_OUT_REG, (1 << GPIO_STBY) |
+                          (!front[LEFT]  << GPIO_A1N1_LEFT)  | (front[LEFT]  << GPIO_A1N2_LEFT) |
+                          (!front[RIGHT] << GPIO_B1N1_RIGHT)  | (front[RIGHT] << GPIO_B1N2_RIGHT));
 
   //set PWM motor esquerdo
   mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, ABS_F(pwmL)*100.0);
@@ -280,7 +286,8 @@ static void func_controlSignal(const float pwmL,const float pwmR)
   mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, ABS_F(pwmR)*100.0);
 
   //driver on
-  gpio_set_level(GPIO_STBY, (pwmL != 0.0) || (pwmR != 0.0)); //se algum pwm for diferente de zero, liga o drive (1)
+  // gpio_set_level(GPIO_STBY, (pwmL != 0.0) || (pwmR != 0.0)); //se algum pwm for diferente de zero, liga o drive (1)
+  // REG_WRITE(GPIO_OUT_REG, );
 }
 //Funcao de tratamento de eventos do bluetooth
 static void
@@ -328,9 +335,10 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 //Refazer
 static void func_calibration()
 {
-  bypass_controller = true;
   memset(omega_ref, 0, 2*sizeof(float));
+  bypass_controller = true;
 
+  #define TIME_MS_WAIT          500
   #define PWM_MIN_INIT         0.10
   #define TIME_MS_WAIT_PWM_MIN  250
   #define TIME_MS_WAIT_VEL_MAX 1000
@@ -346,6 +354,8 @@ static void func_calibration()
   //Aplica maximo PWM
   //aguarda 500ms e armazena as 100 ultimas velocidades do motor esquerdo
   //calcula a media dessas velocidades e armazena como sendo a maior velocidade desse motor para essa rotacao
+  omega_ref[LEFT] = 0.5;
+  vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
   omega_ref[LEFT] = 1.0;
   vTaskDelay(TIME_MS_WAIT_VEL_MAX/portTICK_PERIOD_MS);
   omega_max_tmpL[FRONT] = omega_current[LEFT];
@@ -367,6 +377,8 @@ static void func_calibration()
   //Aplica maximo PWM
   //aguarda 500ms e armazena as 100 ultimas velocidades do motor esquerdo
   //calcula a media dessas velocidades e armazena como sendo a maior velocidade desse motor para essa rotacao
+  omega_ref[LEFT] = -0.5;
+  vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
   omega_ref[LEFT] = -1.0;
   vTaskDelay(TIME_MS_WAIT_VEL_MAX/portTICK_PERIOD_MS);
   omega_max_tmpL[BACK] = ABS_F(omega_current[LEFT]);
@@ -389,6 +401,8 @@ static void func_calibration()
   //Aplica maximo PWM
   //aguarda 500ms e armazena as 100 ultimas velocidades do motor esquerdo
   //calcula a media dessas velocidades e armazena como sendo a maior velocidade desse motor para essa rotacao
+  omega_ref[RIGHT] = 0.5;
+  vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
   omega_ref[RIGHT] = 1.0;
   vTaskDelay(TIME_MS_WAIT_VEL_MAX/portTICK_PERIOD_MS);
   omega_max_tmpR[FRONT] = omega_current[RIGHT];
@@ -409,6 +423,8 @@ static void func_calibration()
   //Aplica maximo PWM
   //aguarda 500ms e armazena as 100 ultimas velocidades do motor esquerdo
   //calcula a media dessas velocidades e armazena como sendo a maior velocidade desse motor para essa rotacao
+  omega_ref[RIGHT] = -0.5;
+  vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
   omega_ref[RIGHT] = -1.0;
   vTaskDelay(TIME_MS_WAIT_VEL_MAX/portTICK_PERIOD_MS);
   omega_max_tmpR[BACK] = ABS_F(omega_current[RIGHT]);
@@ -448,17 +464,16 @@ static void func_calibration()
   coefR[BACK].beta  = -pwmMinR[BACK];
 
   //Maior velocidade considerada
-  omega_max = 0.95 * minOmegaMax;
+  omega_max = 0.90*minOmegaMax;
 
   memset(omega_ref, 0, 2*sizeof(float));
 }
-
 /**WARNING:
 ** Fixar o steptime e o timeout = 2s
 **/
 static void func_identify(const uint8_t options,const float setpoint)
 {
-  const float steptime = 0.01; //segundos
+  const float steptime = 0.002; //segundos
   const float timeout  = 2.0;   //segundos
 
   omega_ref[LEFT]  = 0;

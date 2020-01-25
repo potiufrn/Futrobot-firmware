@@ -20,14 +20,14 @@
 /*************************************************************************************/
 /****************************** DEFINICOES DE TEMPOS *********************************/
 /*************************************************************************************/
-#define TIME_TEST_OMEGA_ZERO 2000   //ms, tempo do timer que realiza o teste de velocidade zero
+#define TIME_TEST_OMEGA_ZERO  300   //ms, tempo do timer que realiza o teste de velocidade zero
 #define TIME_CONTROLLER         5   //ms, periodo de acionamento do controlador
 
 /*************************************************************************************/
 /****************************** ROTINAS PRINCIPAIS ***********************************/
 /*************************************************************************************/
 //Motor 1 (Esquerdo)
-#define  GPIO_PWM_LEFT       23  //Controla a velocidade do motor A (Esquerdo)
+#define  GPIO_PWM_LEFT       23 //Controla a velocidade do motor A (Esquerdo)
 #define  GPIO_A1N1_LEFT      21 //Sentido motor A
 #define  GPIO_A1N2_LEFT      19 //Sentido motor A
 #define  GPIO_OUTA_LEFT      33 //Sinal de saida do encoder Direito (Usado para calcular a velocidade)
