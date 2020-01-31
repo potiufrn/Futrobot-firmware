@@ -87,6 +87,8 @@ static bool bypass_controller = true;
 struct CoefLine coefL[2];       //coef. das retas PWM(omega) para o motor esquerdo
 struct CoefLine coefR[2];       //coef. das retas PWM(omega) para o motor direito
 
+// struct CoefLine coef[4];
+
 static float omega_max = 0.0;   //modulo da velocidade maxima do robo
 static float omega_ref[2]       = {0.0, 0.0}; //-1.0 a 1.0
 static float omega_current[2]   = {0.0, 0.0}; //-1.0 a 1.0
@@ -103,6 +105,15 @@ void app_main()
   bt_queue   = xQueueCreate(1, sizeof(bt_data));
   encoder_queue[LEFT]  = xQueueCreate(1, sizeof(struct Encoder_data));
   encoder_queue[RIGHT] = xQueueCreate(1, sizeof(struct Encoder_data));
+
+  omega_max = 3392.92;
+  for(int i = 0; i < 2; i++)
+  {
+    coefL[i].alpha = 0.00024;
+    coefR[i].alpha = 0.00024;
+    coefL[i].beta  = 0.069687*(1.0 - 2.0*i); //*(1.0 - 2.0*i) para ficar negativo quando i == 1
+    coefR[i].beta  = 0.069687*(1.0 - 2.0*i);
+  }
 
   /** configuracoes iniciais **/
   //interrupcoes no nucleo 0
@@ -218,11 +229,11 @@ periodic_controller()
   float pwm[2];
   struct Encoder_data enc_datas[2];
   int64_t old_pulse_counter[2] = {0, 0};
-  float erro[2];
+  double erro[2];
 
-  float kp[2] = {0.1453846154, 0.1359633028}; // kp para testes
+  float kp[2] = {0.00027383, 0.00027383}; // kp para testes
 
-  uint16_t countVelZero[2] = {500/TIME_CONTROLLER, 500/TIME_CONTROLLER}; //numero de contagem equivalente a 500ms no ciclo do controle
+  uint16_t countVelZero[2] = {800/TIME_CONTROLLER, 800/TIME_CONTROLLER}; //numero de contagem equivalente a 500ms no ciclo do controle
 
   int i;
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -240,7 +251,7 @@ periodic_controller()
           omega_current[i] = 0;
         }
       }else{
-        countVelZero[i]   = 1000/TIME_CONTROLLER;
+        countVelZero[i]   = 800/TIME_CONTROLLER;
         omega_current[i]  = (enc_datas[i].pulse_counter - old_pulse_counter[i])*k;//*0.5 + omega_beta[LEFT]*0.5;
         old_pulse_counter[i] = enc_datas[i].pulse_counter;
       }
@@ -255,12 +266,15 @@ periodic_controller()
     memset(pwm, 0, 2*sizeof(float));
     for(i = 0; i < 2; i++)
     {
-      erro[i] = omega_ref[i]*omega_max - omega_current[i];
-      pwm[i]  = (erro[i]*kp[i])/omega_max;
-
-      pwm[i]  += coefL[F_IS_NEG(omega_ref[i])].alpha*omega_ref[i]*omega_max  +
-                 coefL[F_IS_NEG(omega_ref[i])].beta*(omega_ref[i]  != 0 );
+      erro[i] = omega_ref[i]*omega_max - omega_current[i]; // rad/s
+      pwm[i]  = erro[i]*kp[i];                 // PU
     }
+
+    pwm[LEFT]   += coefL[!F_IS_NEG(omega_ref[LEFT])].alpha*omega_ref[LEFT]*omega_max +
+                   coefL[!F_IS_NEG(omega_ref[LEFT])].beta*(!!omega_ref[LEFT]);
+
+    pwm[RIGHT]  += coefR[!F_IS_NEG(omega_ref[RIGHT])].alpha*omega_ref[RIGHT]*omega_max +
+                   coefR[!F_IS_NEG(omega_ref[RIGHT])].beta*(!!omega_ref[RIGHT]);
 
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
   }
@@ -281,9 +295,9 @@ static void func_controlSignal(const float pwmL,const float pwmR)
                           (!front[RIGHT] << GPIO_B1N1_RIGHT)  | (front[RIGHT] << GPIO_B1N2_RIGHT));
 
   //set PWM motor esquerdo
-  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, ABS_F(pwmL)*100.0);
+  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, SAT(ABS_F(pwmL))*100.0);
   //set PWM motor direito
-  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, ABS_F(pwmR)*100.0);
+  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, SAT(ABS_F(pwmR))*100.0);
 
   //driver on
   // gpio_set_level(GPIO_STBY, (pwmL != 0.0) || (pwmR != 0.0)); //se algum pwm for diferente de zero, liga o drive (1)
@@ -339,7 +353,7 @@ static void func_calibration()
   bypass_controller = true;
 
   #define TIME_MS_WAIT          500
-  #define PWM_MIN_INIT         0.10
+  #define PWM_MIN_INIT          0.2
   #define TIME_MS_WAIT_PWM_MIN  250
   #define TIME_MS_WAIT_VEL_MAX 1000
   const float STEP = 5.0/32767.0;    //por causa da resolucao de 15 bits na transmissao da ref
@@ -473,7 +487,7 @@ static void func_calibration()
 **/
 static void func_identify(const uint8_t options,const float setpoint)
 {
-  const float steptime = 0.002; //segundos
+  const float steptime = 0.005; //segundos
   const float timeout  = 2.0;   //segundos
 
   omega_ref[LEFT]  = 0;
