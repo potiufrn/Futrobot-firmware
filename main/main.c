@@ -40,7 +40,7 @@
 
 // #define DEVICE_NAME "ESP_ROBO_TEST"
 // #define DEVICE_NAME "ESP_ROBO_1"
-#define DEVICE_NAME "ESP_ROBO_4"
+#define DEVICE_NAME "ESP_ROBO_2"
 
 #define GPIO_OUTPUT_PIN_SEL ((1ULL << GPIO_STBY)      | \
                              (1ULL << GPIO_A1N1_LEFT) | \
@@ -92,6 +92,7 @@ struct CoefLine coefR[2];       //coef. das retas PWM(omega) para o motor direit
 static float omega_max = 0.0;   //modulo da velocidade maxima do robo
 static float omega_ref[2]       = {0.0, 0.0}; //-1.0 a 1.0
 static float omega_current[2]   = {0.0, 0.0}; //-1.0 a 1.0
+static float kp[2] = {0.00009652702911, 0.0001116636528}; // kp para testes
 //Identificador do Bluetooth
 static uint32_t bt_handle = 0;
 static TaskHandle_t controller_xHandle = 0;
@@ -106,7 +107,7 @@ void app_main()
   encoder_queue[LEFT]  = xQueueCreate(1, sizeof(struct Encoder_data));
   encoder_queue[RIGHT] = xQueueCreate(1, sizeof(struct Encoder_data));
 
-  omega_max = 3392.92;
+  omega_max = 3800.0;
   for(int i = 0; i < 2; i++)
   {
     coefL[i].alpha = 0.00024;
@@ -132,7 +133,7 @@ void app_main()
       cmd = btdata.data[0] & 0x0F;
 
       switch (cmd) {
-      case CMD_SET_POINT:
+      case CMD_REF:
         decodeFloat(btdata.data, &omega_ref[LEFT], &omega_ref[RIGHT]);
         if(bypass_controller)
           bypass_controller = false;
@@ -150,6 +151,10 @@ void app_main()
         func_identify((uint8_t)btdata.data[1],                       //options
                       *(float*)&btdata.data[2+0*sizeof(float)]);      //setpoint
         break;
+      case CMD_SET_KP:
+        kp[LEFT] = *(float*)&btdata.data[1 + 0*sizeof(float)];
+        kp[RIGHT]= *(float*)&btdata.data[1 + 1*sizeof(float)];
+        break;
       case CMD_CALIBRATION:
         func_calibration();
         break;
@@ -157,7 +162,7 @@ void app_main()
         esp_spp_write(bt_handle, 2*sizeof(float), (uint8_t*)omega_current);
         break;
       case CMD_REQ_CAL:
-        vec_float = (float*)malloc(9*sizeof(float));
+        vec_float = (float*)malloc((9 + 2)*sizeof(float));//9 coef + 2 Kp
 
         vec_float[0] = omega_max;
 
@@ -171,8 +176,12 @@ void app_main()
         vec_float[7] = coefR[BACK].alpha;
         vec_float[8] = coefR[BACK].beta;
 
-        esp_spp_write(bt_handle, 9*sizeof(float), (uint8_t*)vec_float);
+        vec_float[9]  = kp[LEFT];
+        vec_float[10] = kp[RIGHT];
+
+        esp_spp_write(bt_handle, (9+2)*sizeof(float), (uint8_t*)vec_float);
         free(vec_float);
+
         break;
       default:
         break;
@@ -230,8 +239,6 @@ periodic_controller()
   struct Encoder_data enc_datas[2];
   int64_t old_pulse_counter[2] = {0, 0};
   double erro[2];
-
-  float kp[2] = {0.00027383, 0.00027383}; // kp para testes
 
   uint16_t countVelZero[2] = {800/TIME_CONTROLLER, 800/TIME_CONTROLLER}; //numero de contagem equivalente a 500ms no ciclo do controle
 
