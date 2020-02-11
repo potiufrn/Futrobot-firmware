@@ -87,8 +87,6 @@ static bool bypass_controller = true;
 struct CoefLine coefL[2];       //coef. das retas PWM(omega) para o motor esquerdo
 struct CoefLine coefR[2];       //coef. das retas PWM(omega) para o motor direito
 
-// struct CoefLine coef[4];
-
 static float omega_max = 0.0;   //modulo da velocidade maxima do robo
 static float omega_ref[2]       = {0.0, 0.0}; //-1.0 a 1.0
 static float omega_current[2]   = {0.0, 0.0}; //-1.0 a 1.0
@@ -108,13 +106,23 @@ void app_main()
   encoder_queue[RIGHT] = xQueueCreate(1, sizeof(struct Encoder_data));
 
   omega_max = 3800.0;
-  for(int i = 0; i < 2; i++)
-  {
-    coefL[i].alpha = 0.00024;
-    coefR[i].alpha = 0.00024;
-    coefL[i].beta  = 0.069687*(1.0 - 2.0*i); //*(1.0 - 2.0*i) para ficar negativo quando i == 1
-    coefR[i].beta  = 0.069687*(1.0 - 2.0*i);
-  }
+  // for(int i = 0; i < 2; i++)
+  // {
+  //   coefL[i].alpha = 0.00024;
+  //   coefR[i].alpha = 0.00024;
+  //   coefL[i].beta  = 0.069687*(1.0 - 2.0*i); //*(1.0 - 2.0*i) para ficar negativo quando i == 1
+  //   coefR[i].beta  = 0.069687*(1.0 - 2.0*i);
+  // }
+
+  coefL[FRONT].alpha = 0.000272;
+  coefL[FRONT].beta  = 0.089525;
+  coefL[BACK].alpha  = 0.000256;
+  coefL[BACK].beta   = -0.089219;
+
+  coefR[FRONT].alpha = 0.000254;
+  coefR[FRONT].beta  = 0.095323;
+  coefR[BACK].alpha  = 0.000272;
+  coefR[BACK].beta   = -0.089067;
 
   /** configuracoes iniciais **/
   //interrupcoes no nucleo 0
