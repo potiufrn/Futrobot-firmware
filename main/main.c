@@ -1,12 +1,6 @@
-/**
- *  Programa teste para o controle local FeedForward
- *  O programa ira identificar a relacao entre PWM e Velocidade de cada motor para cada
- *  sentido de rotacao
- **/
-
- //Doc util:
-// https://www.pjrc.com/teensy/td_libs_Encoder.html#optimize
-// https://github.com/igorantolic/ai-esp32-rotary-encoder/tree/master/src
+/***
+*** WARNING: ESTE CODIGO EH APENAS PARA TESTES
+***/
 
 #include <string.h>
 #include <time.h>
@@ -38,6 +32,8 @@
 #include <stdio.h>
 #include "esp_log.h"
 
+#define CMD_TEST_TIME_BT 0x0E
+
 // #define DEVICE_NAME "ESP_ROBO_TEST"
 // #define DEVICE_NAME "ESP_ROBO_1"
 #define DEVICE_NAME "ESP_ROBO_2"
@@ -67,13 +63,6 @@ static void periodic_controller();
 //my functions
 static void func_controlSignal(const float pwmL,const float pwmR);
 static void func_calibration();
-//options = 0xXY, sendo X 1 bit para indicar o motor, e os demais bits 7bits da parte Y indicando opcoes para o controlador utilizado,
-//por enquanto Y serão:
-// 0 => controlador padrao
-// 1 => bypass controlador
-// a coleta as velocidades medidas pelos sensores em intervalos de step_time até
-// um tempo total de timeout, retorna um vetor de omegas medidos por referencias e
-// o tamanho do vetor por retorno de funcao
 static void func_identify(const uint8_t options,
                           const float setpoint);  // -1.0 a 1.0
 /*************************************************************************************/
@@ -106,13 +95,6 @@ void app_main()
   encoder_queue[RIGHT] = xQueueCreate(1, sizeof(struct Encoder_data));
 
   omega_max = 3800.0;
-  // for(int i = 0; i < 2; i++)
-  // {
-  //   coefL[i].alpha = 0.00024;
-  //   coefR[i].alpha = 0.00024;
-  //   coefL[i].beta  = 0.069687*(1.0 - 2.0*i); //*(1.0 - 2.0*i) para ficar negativo quando i == 1
-  //   coefR[i].beta  = 0.069687*(1.0 - 2.0*i);
-  // }
 
   coefL[FRONT].alpha = 0.000272;
   coefL[FRONT].beta  = 0.089525;
@@ -130,7 +112,6 @@ void app_main()
   xTaskCreatePinnedToCore(config_bluetooth, "config_bluetooth", 2048, NULL, 5, NULL, 0);
   xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 4, &controller_xHandle, 1);
 
-  //controlador no nucleo 1
   uint8_t  head, cmd;
   float    *vec_float;
   while(1){
@@ -141,13 +122,15 @@ void app_main()
       cmd = btdata.data[0] & 0x0F;
 
       switch (cmd) {
+      case CMD_TEST_TIME_BT:
+
+        break;
       case CMD_REF:
         decodeFloat(btdata.data, &omega_ref[LEFT], &omega_ref[RIGHT]);
         if(bypass_controller)
           bypass_controller = false;
         break;
       case CMD_CONTROL_SIGNAL:
-        //Trecho para teste
         bypass_controller = true;
         decodeFloat(btdata.data, &omega_ref[LEFT], &omega_ref[RIGHT]);
         func_controlSignal(omega_ref[LEFT], omega_ref[RIGHT]);
@@ -207,13 +190,10 @@ static void IRAM_ATTR isr_EncoderLeft()
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
 
-  // my_data.pulse_counter += lookup_table[enc_v & 0b111];
-  //utiliza a ultima decodificação quando há falha(decode = 0)
   my_data.pulse_counter += (lookup_table[enc_v & 0b111] == 0)?last:lookup_table[enc_v & 0b111];
   if(lookup_table[enc_v & 0b111] != 0)
     last = lookup_table[enc_v & 0b111];
 
-  /*atualiza buffer*/
   xQueueSendFromISR(encoder_queue[LEFT], &my_data, NULL);
 }
 static void IRAM_ATTR isr_EncoderRight()
@@ -229,13 +209,10 @@ static void IRAM_ATTR isr_EncoderRight()
   enc_v |= (reg_read & LS(GPIO_OUTA_RIGHT)) >> (GPIO_OUTA_RIGHT-1);
   enc_v |= (reg_read & LS(GPIO_OUTB_RIGHT)) >> GPIO_OUTB_RIGHT;
 
-  // my_data.pulse_counter += lookup_table[enc_v & 0b111];
-  //para evitar somar zero (que é quando o loopup table "falha")
   my_data.pulse_counter += (lookup_table[enc_v & 0b111] == 0)?last:lookup_table[enc_v & 0b111];
   if(lookup_table[enc_v & 0b111] != 0)
     last = lookup_table[enc_v & 0b111];
 
-  /*atualiza buffer*/
   xQueueSendFromISR(encoder_queue[RIGHT], &my_data, NULL);
 }
 
@@ -295,8 +272,6 @@ periodic_controller()
   }
 }
 
-//WARNING usar o acesso direto aos registradores para efetuar as operacoes de
-//mudanca de nivel dos gpios. Obs.: tambem eh possivel alterar o dutycicle por registradores
 static void func_controlSignal(const float pwmL,const float pwmR)
 {
   #define SAT(x) (((x) > 1.0)?1.0:(x))
@@ -313,10 +288,6 @@ static void func_controlSignal(const float pwmL,const float pwmR)
   mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, SAT(ABS_F(pwmL))*100.0);
   //set PWM motor direito
   mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, SAT(ABS_F(pwmR))*100.0);
-
-  //driver on
-  // gpio_set_level(GPIO_STBY, (pwmL != 0.0) || (pwmR != 0.0)); //se algum pwm for diferente de zero, liga o drive (1)
-  // REG_WRITE(GPIO_OUT_REG, );
 }
 //Funcao de tratamento de eventos do bluetooth
 static void
@@ -344,7 +315,6 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
     case ESP_SPP_CL_INIT_EVT:
         break;
     case ESP_SPP_DATA_IND_EVT:
-        // param->data_ind.len e param->data_ind.data
         btdata.data = param->data_ind.data;
         btdata.len  = param->data_ind.len;
         xQueueSend(bt_queue, &btdata, NULL);
