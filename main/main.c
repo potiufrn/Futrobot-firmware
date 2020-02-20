@@ -107,7 +107,6 @@ static TaskHandle_t controller_xHandle = 0;
 // Left  Kp = 0.000096527030
 // Right Kp = 0.000111663656
 
-
 void app_main()
 {
   bt_data btdata;
@@ -115,18 +114,28 @@ void app_main()
   encoder_queue[LEFT]  = xQueueCreate(1, sizeof(struct Encoder_data));
   encoder_queue[RIGHT] = xQueueCreate(1, sizeof(struct Encoder_data));
 
-  omega_max = 3800.0;
+  omega_max = 3204.424561;
+  coef[LEFT  << 1 | FRONT].ang = 0.000281;
+  coef[LEFT  << 1 | FRONT].lin = 0.089219;
 
+  coef[LEFT  << 1 | BACK].ang  = -0.000306;
+  coef[LEFT  << 1 | BACK].lin  =  0.088609;
+
+  coef[RIGHT << 1 | FRONT].ang = 0.000275;
+  coef[RIGHT << 1 | FRONT].lin = 0.078843;
+
+  coef[RIGHT << 1 | BACK].ang  = -0.000332;
+  coef[RIGHT << 1 | BACK].lin  = -0.078233;
   //As 4 retas com os mesmos coeficentes, esses valores foram obtidos por meio de medias
   //de algumas repetições de identificação
-  for(uint8_t motor = 0; motor < 2; motor++)
-  {
-    for(uint8_t sense = 0; sense < 2; sense++)
-    {
-      coef[MS2i(motor, sense)].ang = 0.000272*(1.0+sense*-2.0);
-      coef[MS2i(motor, sense)].lin = 0.089525*(1.0+sense*-2.0);
-    }
-  }
+  // for(uint8_t motor = 0; motor < 2; motor++)
+  // {
+  //   for(uint8_t sense = 0; sense < 2; sense++)
+  //   {
+  //     coef[MS2i(motor, sense)].ang = 0.000272*(1.0+sense*-2.0);
+  //     coef[MS2i(motor, sense)].lin = 0.089525*(1.0+sense*-2.0);
+  //   }
+  // }
 
   /** configuracoes iniciais **/
   //interrupcoes no nucleo 0
@@ -224,34 +233,34 @@ static void IRAM_ATTR isr_EncoderRight()
   enc_v |= (reg_read & LS(GPIO_OUTA_RIGHT)) >> (GPIO_OUTA_RIGHT-1);
   enc_v |= (reg_read & LS(GPIO_OUTB_RIGHT)) >> GPIO_OUTB_RIGHT;
 
-  // my_data.pulse_counter += lookup_table[enc_v & 0b111];
-  //para evitar somar zero (que é quando o loopup table "falha")
   my_data.pulse_counter += (lookup_table[enc_v & 0b111] == 0)?last:lookup_table[enc_v & 0b111];
   if(lookup_table[enc_v & 0b111] != 0)
     last = lookup_table[enc_v & 0b111];
 
-  /*atualiza buffer*/
   xQueueSendFromISR(encoder_queue[RIGHT], &my_data, NULL);
 }
 
 static void
 periodic_controller()
 {
-  const double k = (M_PI/6.0)*1000.0/(TIME_CONTROLLER); //constante pra converter de pulsos/s para rad/s
+  //Sabendo que uma volta completa no eixo do encoder gera 12 interrupcoes
+  //ou seja, 2pi => 12 interrupcoes
+  const double k = (M_PI/6.0)/(TIME_CONTROLLER/1000.0); //constante pra converter de pulsos/s para rad/s
   float pwm[2];
   struct Encoder_data enc_datas[2];
   int64_t old_pulse_counter[2] = {0, 0};
   double erro[2];
   double ref_rad[2];
 
-  uint16_t countVelZero[2] = {800/TIME_CONTROLLER, 800/TIME_CONTROLLER}; //numero de contagem equivalente a 500ms no ciclo do controle
+  uint16_t countVelZero[2] = {TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER, TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER}; //numero de contagem equivalente a 500ms no ciclo do controle
 
-  int i;
   TickType_t xLastWakeTime = xTaskGetTickCount();
+  int i;
   while(1)
   {
     vTaskDelayUntil( &xLastWakeTime, TIME_CONTROLLER/portTICK_PERIOD_MS);
 
+    //Calculando os omegas atuais
     for(i = 0; i < 2; i++)
     {
       if(xQueueReceive(encoder_queue[i], &enc_datas[i], 0) == 0) //buffer vazio
@@ -262,7 +271,7 @@ periodic_controller()
           omega_current[i] = 0;
         }
       }else{
-        countVelZero[i]   = 800/TIME_CONTROLLER;
+        countVelZero[i]   = TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER;
         omega_current[i]  = (enc_datas[i].pulse_counter - old_pulse_counter[i])*k;//*0.5 + omega_lin[LEFT]*0.5;
         old_pulse_counter[i] = enc_datas[i].pulse_counter;
       }
@@ -274,20 +283,19 @@ periodic_controller()
       continue;
     }
 
+    //Controlador
     memset(pwm, 0, 2*sizeof(float));
-
     for(i = 0; i < 2; i++)
     {
       ref_rad[i] = omega_ref[i]*omega_max;
 
-      erro[i] = ref_rad[i] - omega_current[i];    // rad/s
-      pwm[i]  = erro[i]*kp[i];                 // PU
+      erro[i] = ref_rad[i] - omega_current[i];    // rad/s [-omegaMaximo, omegaMaximo]
+      pwm[i]  = erro[i]*kp[i];                    // PU [-1.0, 1.0]
 
       pwm[i] += coef[MS2i(i, F_IS_NEG(omega_ref[i]))].ang*ref_rad[i] +
                 coef[MS2i(i, F_IS_NEG(omega_ref[i]))].lin*(!!omega_ref[i]);
       //INFO: !!omega_ref eh para zerar a contribuicao do lin quando omega_Ref for zero e para nao influenciar no valor quando for diferente de 0, pois com "!!" esse valor ou e 0 ou 1.
     }
-
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
   }
 }
@@ -304,11 +312,8 @@ static void func_controlSignal(const float pwmL,const float pwmR)
   REG_WRITE(GPIO_OUT_REG, (1 << GPIO_STBY) |
                           (!front[LEFT]  << GPIO_A1N1_LEFT)  | (front[LEFT]  << GPIO_A1N2_LEFT) |
                           (!front[RIGHT] << GPIO_B1N1_RIGHT)  | (front[RIGHT] << GPIO_B1N2_RIGHT));
-
-  //set PWM motor esquerdo
-  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, SAT(ABS_F(pwmL))*100.0);
-  //set PWM motor direito
-  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, SAT(ABS_F(pwmR))*100.0);
+  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, SAT(ABS_F(pwmL))*100.0);  //set PWM motor esquerdo
+  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, SAT(ABS_F(pwmR))*100.0);//set PWM motor direito
 
   //driver on
   // gpio_set_level(GPIO_STBY, (pwmL != 0.0) || (pwmR != 0.0)); //se algum pwm for diferente de zero, liga o drive (1)
@@ -416,40 +421,33 @@ static void func_calibration()
 **/
 static void func_identify(const uint8_t options,const float setpoint)
 {
-  const float steptime = 0.005; //segundos
-  const float timeout  = 2.0;   //segundos
+  bypass_controller  = !!(options & 0x7F);  //bypass ou nao o controlador
+  memset(omega_ref, 0, 2*sizeof(float));
 
-  omega_ref[LEFT]  = 0;
-  omega_ref[RIGHT] = 0;
+  int motor_identify     = ((options & 0x80) >> 7) & 0x01;
+  int size = 2.0/(TIME_CONTROLLER/1000.0); //captura durante 2 segundos a cada ciclo de controle vai gerar 'size' floats de dados lidos
+  float *vec_omegas_identify = (float*)malloc(size*sizeof(float));
+  memset(vec_omegas_identify, 0, size*sizeof(float));
 
-  uint8_t motor  = ((options & 0x80) >> 7) & 0x01;
-  uint8_t typeC  = options & 0x7F;
-  int size = timeout/steptime;
-  int step_time_ticks = (steptime*1000)/portTICK_PERIOD_MS;
-  float *vec_omegas = (float*)malloc(size*sizeof(float));
-  memset(vec_omegas, 0, size*sizeof(float));
-
-  bypass_controller = !!typeC; //bypass ou nao o controlador
-  omega_ref[motor]  = setpoint;
-
-  // vTaskDelay(step_time_ticks);
-
+  int steptime = 2000/size;
+  omega_ref[motor_identify]  = setpoint;
   for(int i = 0; i < size; i++)
   {
-    vec_omegas[i] = omega_current[motor];
-    vTaskDelay(step_time_ticks);
+    vTaskDelay(steptime/portTICK_PERIOD_MS);  //aguarda os 2s
+    vec_omegas_identify[i] = omega_current[motor_identify];
   }
 
-  omega_ref[LEFT]  = 0;
-  omega_ref[RIGHT] = 0;
+  memset(omega_ref, 0, 2*sizeof(float));
 
+  //envia a informacao de quantas medidas foram realizadas
+  esp_spp_write(bt_handle, sizeof(int), &size);
   //enviar em blocos de 200, observei que o maximo de bytes transmitidos esta sendo de 990 bytes
   //que equivale a 247.5 floats
   //transmissao dos dados em bloco de 200
   for(int i = 0; i < size; i += 200)
-    esp_spp_write(bt_handle, (200)*sizeof(float), (uint8_t*)vec_omegas+i);
+    esp_spp_write(bt_handle, (200)*sizeof(float), (uint8_t*)vec_omegas_identify+i);
 
-  free(vec_omegas);
+  free(vec_omegas_identify);
 }
 /*************************************************************************************/
 /****************************** CONFIGURACOES ****************************************/

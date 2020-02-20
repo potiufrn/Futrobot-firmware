@@ -21,8 +21,8 @@
 /*************************************************************************************/
 /****************************** DEFINICOES DE TEMPOS *********************************/
 /*************************************************************************************/
-#define TIME_TEST_OMEGA_ZERO  300   //ms, tempo do timer que realiza o teste de velocidade zero
-#define TIME_CONTROLLER         5   //ms, periodo de acionamento do controlador
+#define TIME_TEST_OMEGA_ZERO  500   //ms, tempo do timer que realiza o teste de velocidade zero
+#define TIME_CONTROLLER        10   //ms, periodo de acionamento do controlador
 
 /*************************************************************************************/
 /****************************** ROTINAS PRINCIPAIS ***********************************/
