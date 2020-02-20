@@ -51,6 +51,23 @@
 #define SATURADOR(x) ((ABS_F(x) > 1.0)?1.0:ABS_F(x))  //0.0 a 1.0
 #define LS(x) (1ULL << (x))
 #define DELAY_SEC(x) vTaskDelay(((x)*1000.0)/portTICK_PERIOD_MS)
+//Seguindo o seguinte padrao:
+/*
+*   Motor Esquerdo: 0
+*   Motor Direito:  1
+*   Sentido para frente: 0
+*   Sentido para trás:   1
+* Obs.: o sentido para frente/trás são os sentidos que favorecem o movimento para frene ou para trás do robo como
+* um todo, ou seja, a referência é o robô e não o eixo do motor.
+*
+*   Relação entre motor/sentido e index no vetor de 4 elementos do tipo coef de reta (CoefLine).
+*   Motor | Sense | index
+*     0       0       0         (Motor esquerdo para frente)
+*     0       1       1         (Motor esquerdo para trás)
+*     1       0       2         (Motor direito  para frente)
+*     1       1       3         (Motor direito  para trás)
+*/
+#define MS2i(motor, sense) ((((motor) << 1) | (sense))&0x03)  //Macro para converter motor e sense em index no vetor de coeficientes
 
 
 enum ROTATE_S{
@@ -62,8 +79,8 @@ enum MOTOR{
   RIGHT
 };
 struct CoefLine{
-  float alpha; //coef. angular da reta
-  float beta;  //coef. linear da reta
+  float ang; //coef. angular da reta
+  float lin;  //coef. linear da reta
 };
 typedef struct{
   uint8_t *data;
