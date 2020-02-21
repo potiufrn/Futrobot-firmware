@@ -89,6 +89,7 @@ typedef struct{
 
 struct Encoder_data{
   int64_t pulse_counter; //quantidade de pulsos desde o inicio da interrupcao
+  double  dt; //diferenca de tempo entre as daus ultimas interrupcoes
 };
 /*************************************************************************************/
 /****************************** FUNCOES AUXILIARES ***********************************/

@@ -205,8 +205,13 @@ static void IRAM_ATTR isr_EncoderLeft()
 {
   static int8_t  lookup_table[] = { 0,1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
   static uint8_t enc_v = 0;
-  static struct Encoder_data my_data = {0};//{0, 0.0};
+  static struct Encoder_data my_data = {0, 0.0};
   static int8_t last = 0;
+  static double lastTime = 0, newTime;
+
+  newTime = get_time_sec();
+  my_data.dt = newTime - lastTime;
+  lastTime = newTime;
 
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
@@ -225,8 +230,13 @@ static void IRAM_ATTR isr_EncoderRight()
   static int8_t  lookup_table[] = { 0,-1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
   static uint8_t  enc_v = 0;
   static uint32_t reg_read;
-  static struct Encoder_data my_data = {0};//{0, 0.0};
+  static struct Encoder_data my_data = {0, 0.0};
   static int8_t last = 0;
+  static double lastTime = 0, newTime;
+
+  newTime = get_time_sec();
+  my_data.dt = newTime - lastTime;
+  lastTime = newTime;
 
   enc_v <<= 2;
   reg_read = REG_READ(GPIO_IN_REG);
@@ -245,7 +255,8 @@ periodic_controller()
 {
   //Sabendo que uma volta completa no eixo do encoder gera 12 interrupcoes
   //ou seja, 2pi => 12 interrupcoes
-  const double k = (M_PI/6.0)/(TIME_CONTROLLER/1000.0); //constante pra converter de pulsos/s para rad/s
+  const double k1 = (M_PI/6.0); //para dt variavel
+  const double k2 = k1/(TIME_CONTROLLER/1000.0); //constante pra converter de pulsos/s para rad/s, para dt fixo
   float pwm[2];
   struct Encoder_data enc_datas[2];
   int64_t old_pulse_counter[2] = {0, 0};
@@ -271,9 +282,12 @@ periodic_controller()
           omega_current[i] = 0;
         }
       }else{
-        countVelZero[i]   = TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER;
-        omega_current[i]  = (enc_datas[i].pulse_counter - old_pulse_counter[i])*k;//*0.5 + omega_lin[LEFT]*0.5;
+        omega_current[i]  = (enc_datas[i].pulse_counter - old_pulse_counter[i])*k2;//*0.5 + omega_lin[LEFT]*0.5;
         old_pulse_counter[i] = enc_datas[i].pulse_counter;
+        // if(enc_datas[i].dt != 0)
+        //   omega_current[i]  = (1 - 2*F_IS_NEG(enc_datas[i].pulse_counter))*(1.0/enc_datas[i].dt)*k1;
+        // if(i == 0)ESP_LOGI("LOG!!!","Omega:%lf Dt:%lf", omega_current[i], enc_datas[i].dt);
+        countVelZero[i]   = TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER;
       }
     }
 
@@ -360,7 +374,6 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         break;
     }
 }
-
 //Refazer
 static void func_calibration()
 {
