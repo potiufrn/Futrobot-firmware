@@ -89,7 +89,10 @@ struct CoefLine coef[4];
 static float omega_max = 0.0;   //modulo da velocidade maxima do robo
 static float omega_ref[2]       = {0.0, 0.0}; //-1.0 a 1.0
 static float omega_current[2]   = {0.0, 0.0}; //-1.0 a 1.0
+
 static float kp[2] = {0.00009652702911, 0.0001116636528}; // kp para testes
+static float ki[2] = {0.004, 0.004}; // kp para testes
+
 //Identificador do Bluetooth
 static uint32_t bt_handle = 0;
 static TaskHandle_t controller_xHandle = 0;
@@ -98,15 +101,6 @@ static TaskHandle_t controller_xHandle = 0;
 /****************************** ROTINAS PRINCIPAIS ***********************************/
 /*************************************************************************************/
 
-// Dados de uma identificacao do robo 2
-// Omega Max: 3204.424561 rad/s = 1.602212 m/s
-// Left  Front  => a = 0.000281 , b = 0.089219
-// Left  Back   => a = -0.000306 , b = -0.088609
-// Right Front  => a = 0.000275 , b = 0.078843
-// Right Back   => a = -0.000332 , b = -0.078233
-// Left  Kp = 0.000096527030
-// Right Kp = 0.000111663656
-
 void app_main()
 {
   bt_data btdata;
@@ -114,7 +108,7 @@ void app_main()
   encoder_queue[LEFT]  = xQueueCreate(1, sizeof(struct Encoder_data));
   encoder_queue[RIGHT] = xQueueCreate(1, sizeof(struct Encoder_data));
 
-  omega_max = 3204.424561;
+  omega_max = 2403.318359;
   coef[LEFT  << 1 | FRONT].ang = 0.000281;
   coef[LEFT  << 1 | FRONT].lin = 0.089219;
 
@@ -160,7 +154,6 @@ void app_main()
           bypass_controller = false;
         break;
       case CMD_CONTROL_SIGNAL:
-        //Trecho para teste
         bypass_controller = true;
         decodeFloat(btdata.data, &omega_ref[LEFT], &omega_ref[RIGHT]);
         func_controlSignal(omega_ref[LEFT], omega_ref[RIGHT]);
@@ -260,7 +253,9 @@ periodic_controller()
   float pwm[2];
   struct Encoder_data enc_datas[2];
   int64_t old_pulse_counter[2] = {0, 0};
+
   double erro[2];
+  double cumErro[2]= {0.0, 0.0};
   double ref_rad[2];
 
   uint16_t countVelZero[2] = {TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER, TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER}; //numero de contagem equivalente a 500ms no ciclo do controle
@@ -301,15 +296,18 @@ periodic_controller()
     memset(pwm, 0, 2*sizeof(float));
     for(i = 0; i < 2; i++)
     {
-      ref_rad[i] = omega_ref[i]*omega_max;
+      ref_rad[i]  = omega_ref[i]*omega_max;
+      erro[i]     = ref_rad[i] - omega_current[i];    // rad/s [-omegaMaximo, omegaMaximo]
+      cumErro[i] += erro[i]*(TIME_CONTROLLER/1000.0);
 
-      erro[i] = ref_rad[i] - omega_current[i];    // rad/s [-omegaMaximo, omegaMaximo]
-      pwm[i]  = erro[i]*kp[i];                    // PU [-1.0, 1.0]
+      pwm[i]  = (erro[i]*kp[i] + cumErro[i]*ki[i]*(ABS_F(pwm[i]) <= 1.0))*!!(ref_rad[i]); // PU [-1.0, 1.0]
 
-      pwm[i] += coef[MS2i(i, F_IS_NEG(omega_ref[i]))].ang*ref_rad[i] +
-                coef[MS2i(i, F_IS_NEG(omega_ref[i]))].lin*(!!omega_ref[i]);
+      // pwm[i] += coef[MS2i(i, F_IS_NEG(omega_ref[i]))].ang*ref_rad[i] +
+      //           coef[MS2i(i, F_IS_NEG(omega_ref[i]))].lin*(!!omega_ref[i]);
+
       //INFO: !!omega_ref eh para zerar a contribuicao do lin quando omega_Ref for zero e para nao influenciar no valor quando for diferente de 0, pois com "!!" esse valor ou e 0 ou 1.
     }
+    // ESP_LOGI("DEBUG", "Motor:%d PWM:%f Omega:%f", 1, pwm[1], omega_current[1]);
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
   }
 }
@@ -328,10 +326,6 @@ static void func_controlSignal(const float pwmL,const float pwmR)
                           (!front[RIGHT] << GPIO_B1N1_RIGHT)  | (front[RIGHT] << GPIO_B1N2_RIGHT));
   mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, SAT(ABS_F(pwmL))*100.0);  //set PWM motor esquerdo
   mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, SAT(ABS_F(pwmR))*100.0);//set PWM motor direito
-
-  //driver on
-  // gpio_set_level(GPIO_STBY, (pwmL != 0.0) || (pwmR != 0.0)); //se algum pwm for diferente de zero, liga o drive (1)
-  // REG_WRITE(GPIO_OUT_REG, );
 }
 //Funcao de tratamento de eventos do bluetooth
 static void
