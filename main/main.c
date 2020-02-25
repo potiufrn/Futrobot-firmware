@@ -86,7 +86,8 @@ static bool bypass_controller = true;
 
 struct CoefLine coef[4];
 
-static float omega_max = 0.0;   //modulo da velocidade maxima do robo
+static float omega_max   = 0.0;   //modulo da velocidade maxima do robo
+static float minOmega[4] = {0.0, 0.0, 0.0, 0.0};
 static float omega_ref[2]       = {0.0, 0.0}; //-1.0 a 1.0
 static float omega_current[2]   = {0.0, 0.0}; //-1.0 a 1.0
 
@@ -108,28 +109,24 @@ void app_main()
   encoder_queue[LEFT]  = xQueueCreate(1, sizeof(struct Encoder_data));
   encoder_queue[RIGHT] = xQueueCreate(1, sizeof(struct Encoder_data));
 
-  omega_max = 2403.318359;
-  coef[LEFT  << 1 | FRONT].ang = 0.000281;
-  coef[LEFT  << 1 | FRONT].lin = 0.089219;
+  omega_max = 2450.442383;
+  coef[LEFT  << 1 | FRONT].ang = 0.000406;
+  coef[LEFT  << 1 | FRONT].lin = 0.117602;
 
-  coef[LEFT  << 1 | BACK].ang  = -0.000306;
-  coef[LEFT  << 1 | BACK].lin  =  0.088609;
+  coef[LEFT  << 1 | BACK].ang  = -0.000367;
+  coef[LEFT  << 1 | BACK].lin  = -0.100511;
 
-  coef[RIGHT << 1 | FRONT].ang = 0.000275;
-  coef[RIGHT << 1 | FRONT].lin = 0.078843;
+  coef[RIGHT << 1 | FRONT].ang = 0.000444;
+  coef[RIGHT << 1 | FRONT].lin = 0.139423;
 
-  coef[RIGHT << 1 | BACK].ang  = -0.000332;
-  coef[RIGHT << 1 | BACK].lin  = -0.078233;
-  //As 4 retas com os mesmos coeficentes, esses valores foram obtidos por meio de medias
-  //de algumas repetições de identificação
-  // for(uint8_t motor = 0; motor < 2; motor++)
-  // {
-  //   for(uint8_t sense = 0; sense < 2; sense++)
-  //   {
-  //     coef[MS2i(motor, sense)].ang = 0.000272*(1.0+sense*-2.0);
-  //     coef[MS2i(motor, sense)].lin = 0.089525*(1.0+sense*-2.0);
-  //   }
-  // }
+  coef[RIGHT << 1 | BACK].ang  = -0.000415;
+  coef[RIGHT << 1 | BACK].lin  = -0.119433;
+
+  // Left  Front  => a = 0.000701 , b = 0.119128
+  // Left  Back   => a = -0.000408 , b = -0.109515
+  // Right Front  => a = 0.000357 , b = 0.121875
+  // Right Back   => a = -0.000420 , b = -0.099596
+
 
   /** configuracoes iniciais **/
   //interrupcoes no nucleo 0
@@ -297,13 +294,13 @@ periodic_controller()
     for(i = 0; i < 2; i++)
     {
       ref_rad[i]  = omega_ref[i]*omega_max;
-      erro[i]     = ref_rad[i] - omega_current[i];    // rad/s [-omegaMaximo, omegaMaximo]
-      cumErro[i] += erro[i]*(TIME_CONTROLLER/1000.0);
+      // erro[i]     = ref_rad[i] - omega_current[i];    // rad/s [-omegaMaximo, omegaMaximo]
+      // cumErro[i] += erro[i]*(TIME_CONTROLLER/1000.0);
 
-      pwm[i]  = (erro[i]*kp[i] + cumErro[i]*ki[i]*(ABS_F(pwm[i]) <= 1.0))*!!(ref_rad[i]); // PU [-1.0, 1.0]
+      // pwm[i]  = (erro[i]*kp[i] + cumErro[i]*ki[i]*(ABS_F(pwm[i]) <= 1.0))*!!(ref_rad[i]); // PU [-1.0, 1.0]
 
-      // pwm[i] += coef[MS2i(i, F_IS_NEG(omega_ref[i]))].ang*ref_rad[i] +
-      //           coef[MS2i(i, F_IS_NEG(omega_ref[i]))].lin*(!!omega_ref[i]);
+      pwm[i] += coef[MS2i(i, F_IS_NEG(omega_ref[i]))].ang*(ref_rad[i] - minOmega[MS2i(i, F_IS_NEG(omega_ref[i]))]) +
+                coef[MS2i(i, F_IS_NEG(omega_ref[i]))].lin*(!!omega_ref[i]);
 
       //INFO: !!omega_ref eh para zerar a contribuicao do lin quando omega_Ref for zero e para nao influenciar no valor quando for diferente de 0, pois com "!!" esse valor ou e 0 ou 1.
     }
@@ -378,12 +375,13 @@ static void func_calibration()
   #define MIN_INIT               0.2
   #define TIME_MS_WAIT_MIN       150
   #define TIME_MS_WAIT_VEL_MAX  1000
-  const float STEP = 5.0/32767.0;    //por causa da resolucao de 15 bits na transmissao da ref
+  const float STEP = 5.0/32767.0;    //devido a resolucao de 15 bits na transmissao da ref
 
   float omega_max_tmp[4];
   float pwmMin[4];
-  float minOmegaMax = 0.0;
+  float minOmegaMax = 999999.9;
   float refmin;
+
 
   for(int motor = 0; motor < 2; motor++)
   {
@@ -391,20 +389,21 @@ static void func_calibration()
     for(int sense = 0; sense < 2; sense++)
     {
       //medir velocidade maxima
-      //esse trecho seginte eh para evitar uma subida abrupta de 0 ah 100
+      //esse trecho seginte eh para evitar uma subida abrupta de 0 a 100% de pwm
       omega_ref[motor] = 0.7 - 2*0.7*(sense);
       vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
       //equacao para dar 1 quando sense == 0, e -1 para sense == 1
       omega_ref[motor] = 1.0 - 2.0*(sense);
       vTaskDelay(TIME_MS_WAIT_VEL_MAX/portTICK_PERIOD_MS);
       omega_max_tmp[MS2i(motor, sense)] = omega_current[motor];
-      minOmegaMax = (omega_max_tmp[MS2i(motor, sense)] < minOmegaMax)?omega_max_tmp[MS2i(motor, sense)]:minOmegaMax;
+      minOmegaMax = (ABS_F(omega_max_tmp[MS2i(motor, sense)]) < ABS_F(minOmegaMax))?omega_max_tmp[MS2i(motor, sense)]:minOmegaMax;
 
       //medir pwm minimo
       //Ideia base: reduzir ref(pwm) ate descobrir o minimo necessario para fazer o motor rotacionar.
       refmin = MIN_INIT - 2.0*MIN_INIT*sense;
       while(omega_current[motor] != 0.0)
       {
+        minOmega[MS2i(motor, sense)] = omega_current[motor];
         refmin += 2*STEP*sense - STEP;
         omega_ref[motor] = refmin;
         vTaskDelay(TIME_MS_WAIT_MIN/portTICK_PERIOD_MS);
@@ -414,7 +413,7 @@ static void func_calibration()
       pwmMin[MS2i(motor, sense)] = refmin;
 
       //Calculo dos coef.
-      coef[MS2i(motor, sense)].ang  = (1.0 - pwmMin[MS2i(motor, sense)])/(omega_max_tmp[MS2i(motor, sense)]);
+      coef[MS2i(motor, sense)].ang  = (1.0 - pwmMin[MS2i(motor, sense)])/(omega_max_tmp[MS2i(motor, sense)] - minOmega[MS2i(motor, sense)]);
       coef[MS2i(motor, sense)].lin  = pwmMin[MS2i(motor, sense)];
     }
   }
