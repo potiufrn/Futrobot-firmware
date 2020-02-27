@@ -1,5 +1,10 @@
 #include <stdint.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_system.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 /*************************************************************************************/
 /********************************** COMANDOS  ****************************************/
 /*************************************************************************************/
@@ -41,11 +46,10 @@
 #define  GPIO_B1N2_RIGHT   17  // Sentido motor B
 #define  GPIO_OUTA_RIGHT   15  //Sinal de saida do encoder Esquerdo (usado para calcular a velocidade)
 #define  GPIO_OUTB_RIGHT    4  //Sinal em quadrado com relacao ao CAP0A do motor 1 (usado para identificar o sentido de rotacao)
-
 /*************************************************************************************/
 /****************************** MACROS, ESTRUCT E ENUM *******************************/
 /*************************************************************************************/
-//sinal de um float, 1 => negativo. 0 => positivo
+//sinal de um float, 1/True caso negativo. 0/False caso positivo
 #define F_IS_NEG(x) (*(uint32_t*)&(x) >> 31)
 #define ABS_F(x) (((x)<0.0)?-(x):(x))
 #define SATURADOR(x) ((ABS_F(x) > 1.0)?1.0:ABS_F(x))  //0.0 a 1.0
@@ -69,27 +73,35 @@
 */
 #define MS2i(motor, sense) ((((motor) << 1) | (sense))&0x03)  //Macro para converter motor e sense em index no vetor de coeficientes
 
+enum ROTATE_S{ FRONT, BACK};
+enum MOTOR{ LEFT, RIGHT};
 
-enum ROTATE_S{
-  FRONT,
-  BACK
-};
-enum MOTOR{
-  LEFT,
-  RIGHT
-};
-struct CoefLine{
+struct CoefLine
+{
   float ang; //coef. angular da reta
   float lin;  //coef. linear da reta
 };
-typedef struct{
+typedef struct
+{
   uint8_t *data;
   uint32_t len;
 }bt_data;
 
-struct Encoder_data{
+struct Encoder_data
+{
   int64_t pulse_counter; //quantidade de pulsos desde o inicio da interrupcao
   double  dt; //diferenca de tempo entre as daus ultimas interrupcoes
+};
+
+//WARNING: Ainda nao como o sistema se comportar ao alterar a struct Parameters, aumento ou diminuindo o
+//numero de variaveis que ela contem, e tentar realizar a leitura ou escrita no espaco de memoria usado
+//antes da alteracao
+struct Parameters
+{
+  struct CoefLine coef[4];
+  float omegaMax;
+  float kp[2];
+  float ki[2];
 };
 /*************************************************************************************/
 /****************************** FUNCOES AUXILIARES ***********************************/
@@ -98,3 +110,10 @@ void float2bytes(const float*f, uint8_t *bitstream, uint32_t num_float);
 void bytes2float(const uint8_t *bitstream, float*f, uint32_t num_float);
 void decodeFloat(const uint8_t *data, float *fa, float *fb);
 double get_time_sec(void);
+
+#define STORAGE_NAMESPACE "storage"
+//ref.: https://docs.espressif.com/projects/esp-idf/en/stable/api-reference/storage/nvs_flash.html
+esp_err_t save_parameters(void* ptr_parameters);
+esp_err_t load_parameters(void* ptr_parameters);
+esp_err_t erase_parameters();
+esp_err_t erase_all(); //apaga todos os pares de chave-valor  dentro do espaco de nomes: STORAGE_NAMESPACE
