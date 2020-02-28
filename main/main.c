@@ -37,7 +37,8 @@
 
 // #define DEVICE_NAME "ESP_ROBO_TEST"
 // #define DEVICE_NAME "ESP_ROBO_1"
-#define DEVICE_NAME "ESP_ROBO_2"
+// #define DEVICE_NAME "ESP_ROBO_2"
+#define DEVICE_NAME "ESP_ROBO_4"
 
 #define GPIO_OUTPUT_PIN_SEL ((1ULL << GPIO_STBY)      | \
                              (1ULL << GPIO_A1N1_LEFT) | \
@@ -166,13 +167,8 @@ static void IRAM_ATTR isr_EncoderLeft()
 {
   static int8_t  lookup_table[] = { 0,1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
   static uint8_t enc_v = 0;
-  static struct Encoder_data my_data = {0, 0.0};
+  static struct Encoder_data my_data = {0};
   static int8_t last = 0;
-  static double lastTime = 0, newTime;
-
-  newTime = get_time_sec();
-  my_data.dt = newTime - lastTime;
-  lastTime = newTime;
 
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
@@ -191,13 +187,8 @@ static void IRAM_ATTR isr_EncoderRight()
   static int8_t  lookup_table[] = { 0,-1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
   static uint8_t  enc_v = 0;
   static uint32_t reg_read;
-  static struct Encoder_data my_data = {0, 0.0};
+  static struct Encoder_data my_data = {0};
   static int8_t last = 0;
-  static double lastTime = 0, newTime;
-
-  newTime = get_time_sec();
-  my_data.dt = newTime - lastTime;
-  lastTime = newTime;
 
   enc_v <<= 2;
   reg_read = REG_READ(GPIO_IN_REG);
@@ -245,12 +236,9 @@ periodic_controller()
           omegaCurrent[i] = 0;
         }
       }else{
-        // if(enc_datas[i].dt != 0)
-        //   omegaCurrent[i]  = (1 - 2*F_IS_NEG(enc_datas[i].pulse_counter))*(1.0/enc_datas[i].dt)*k1;
-        // if(i == 0)ESP_LOGI("LOG!!!","Omega:%lf Dt:%lf", omegaCurrent[i], enc_datas[i].dt);
-        omegaCurrent[i]  = (enc_datas[i].pulse_counter - old_pulse_counter[i])*k2;//*0.5 + omega_lin[LEFT]*0.5;
+        omegaCurrent[i]  = (enc_datas[i].pulse_counter - old_pulse_counter[i])*k2;
         old_pulse_counter[i] = enc_datas[i].pulse_counter;
-        countVelZero[i]   = TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER;
+        countVelZero[i]  = TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER;
       }
     }
 
@@ -265,15 +253,13 @@ periodic_controller()
     for(i = 0; i < 2; i++)
     {
       ref_rad[i]  = omegaRef[i]*parameters.omegaMax;
-      // erro[i]     = ref_rad[i] - omegaCurrent[i];    // rad/s [-omegaMaximo, omegaMaximo]
+      erro[i]     = ref_rad[i] - omegaCurrent[i];    // rad/s [-omegaMaximo, omegaMaximo]
       // cumErro[i] += erro[i]*(TIME_CONTROLLER/1000.0);
-
       // pwm[i]  = (erro[i]*parameters.parameters.kp[i] + cumErro[i]*parameters.ki[i]*(ABS_F(pwm[i]) <= 1.0))*!!(ref_rad[i]); // PU [-1.0, 1.0]
-
+      // pwm[i] = erro[i]*parameters.kp[i];
+      //INFO: !!omegaRef eh para zerar a contribuicao do lin quando omega_Ref for zero e para nao influenciar no valor quando for diferente de 0, pois com "!!" esse valor ou e 0 ou 1.
       pwm[i] += parameters.coef[MS2i(i, F_IS_NEG(omegaRef[i]))].ang*ref_rad[i] +
                 parameters.coef[MS2i(i, F_IS_NEG(omegaRef[i]))].lin*(!!omegaRef[i]);
-
-      //INFO: !!omegaRef eh para zerar a contribuicao do lin quando omega_Ref for zero e para nao influenciar no valor quando for diferente de 0, pois com "!!" esse valor ou e 0 ou 1.
     }
     // ESP_LOGI("DEBUG", "Motor:%d PWM:%f Omega:%f", 1, pwm[1], omegaCurrent[1]);
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
@@ -346,7 +332,7 @@ static void func_calibration()
   #define MIN_INIT               0.2
   #define TIME_MS_WAIT_MIN       150
   #define TIME_MS_WAIT_VEL_MAX  1000
-  const float STEP = 5.0/32767.0;    //devido a resolucao de 15 bits na transmissao da ref
+  const float STEP = 2.0/32767.0;    //devido a resolucao de 15 bits na transmissao da ref
 
   float omegaMax_tmp[4];
   float pwmMin[4];
@@ -365,8 +351,8 @@ static void func_calibration()
       //equacao para dar 1 quando sense == 0, e -1 para sense == 1
       omegaRef[motor] = 1.0 - 2.0*(sense);
       vTaskDelay(TIME_MS_WAIT_VEL_MAX/portTICK_PERIOD_MS);
-      omegaMax_tmp[MS2i(motor, sense)] = omegaCurrent[motor];
-      minOmegaMax = (ABS_F(omegaMax_tmp[MS2i(motor, sense)]) < ABS_F(minOmegaMax))?omegaMax_tmp[MS2i(motor, sense)]:minOmegaMax;
+      omegaMax_tmp[MS2i(motor, sense)] = ABS_F(omegaCurrent[motor]);
+      minOmegaMax = (omegaMax_tmp[MS2i(motor, sense)] < minOmegaMax)?omegaMax_tmp[MS2i(motor, sense)]:minOmegaMax;
 
       //medir pwm minimo
       //Ideia base: reduzir ref(pwm) ate descobrir o minimo necessario para fazer o motor rotacionar.
@@ -384,7 +370,8 @@ static void func_calibration()
       pwmMin[MS2i(motor, sense)] = refmin;
 
       //Calculo dos coef.
-      parameters.coef[MS2i(motor, sense)].ang  = (1.0 - pwmMin[MS2i(motor, sense)])/(omegaMax_tmp[MS2i(motor, sense)] - minOmega);
+      parameters.coef[MS2i(motor, sense)].ang  = (1.0 - ABS_F(pwmMin[MS2i(motor, sense)]))/(omegaMax_tmp[MS2i(motor, sense)] - minOmega);
+      parameters.coef[MS2i(motor, sense)].ang  = ABS_F(parameters.coef[MS2i(motor, sense)].ang);
       parameters.coef[MS2i(motor, sense)].lin  = pwmMin[MS2i(motor, sense)] - minOmega*parameters.coef[MS2i(motor, sense)].ang;
     }
   }
@@ -410,7 +397,8 @@ static void func_identify(const uint8_t options,const float setpoint)
 
   int steptime = 2000/size;
   omegaRef[motor_identify]  = setpoint;
-  for(int i = 0; i < size; i++)
+  vec_omegas_identify[0] = setpoint*parameters.omegaMax; //aqui eu uso o primeiro float do vetor para guardar a ref. em rad/s
+  for(int i = 1; i < size; i++)
   {
     vTaskDelay(steptime/portTICK_PERIOD_MS);  //aguarda os 2s
     vec_omegas_identify[i] = omegaCurrent[motor_identify];
@@ -441,7 +429,11 @@ static void _setup()
   //Carrega os ultimos parametros salvos na memoria Flash
   esp_err_t err = load_parameters(&parameters);
   if(err != ESP_OK)
+  {
     ESP_LOGE("POTI_ERRO","Falha ao carregar os parametros, erro:%s", esp_err_to_name(err));
+    // if(err == ESP_ERR_NVS_NOT_FOUND)//este esp ainda nao possui dados salvos na memoria
+  }
+
 
   //Config. Bluetooth
   esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
