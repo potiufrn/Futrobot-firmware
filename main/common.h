@@ -27,7 +27,7 @@
 /****************************** DEFINICOES DE TEMPOS *********************************/
 /*************************************************************************************/
 #define TIME_TEST_OMEGA_ZERO  500   //ms, tempo do timer que realiza o teste de velocidade zero
-#define TIME_CONTROLLER        10   //ms, periodo de acionamento do controlador
+#define TIME_CONTROLLER         5   //ms, periodo de acionamento do controlador
 
 /*************************************************************************************/
 /****************************** ROTINAS PRINCIPAIS ***********************************/
@@ -89,8 +89,9 @@ typedef struct
 
 struct Encoder_data
 {
-  int64_t pulse_counter; //quantidade de pulsos desde o inicio da interrupcao
-  // double  freq; // 1/dt
+  int64_t pulses; //quantidade de pulsos desde o inicio da interrupcao
+  int64_t nOmegas;
+  double  cumOmega;
 };
 
 //WARNING: Ainda nao como o sistema se comportar ao alterar a struct Parameters, aumento ou diminuindo o
@@ -100,8 +101,8 @@ struct Parameters
 {
   struct CoefLine coef[4];
   float omegaMax;
-  float kp[2];
-  float ki[2];
+  float Kp[2];
+  float Ti[2];
 };
 /*************************************************************************************/
 /****************************** FUNCOES AUXILIARES ***********************************/
@@ -109,7 +110,7 @@ struct Parameters
 void float2bytes(const float*f, uint8_t *bitstream, uint32_t num_float);
 void bytes2float(const uint8_t *bitstream, float*f, uint32_t num_float);
 void decodeFloat(const uint8_t *data, float *fa, float *fb);
-double get_time_sec(void);
+double getTime_sec(void);
 
 #define STORAGE_NAMESPACE "storage"
 //ref.: https://docs.espressif.com/projects/esp-idf/en/stable/api-reference/storage/nvs_flash.html

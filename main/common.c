@@ -28,18 +28,19 @@ void decodeFloat(const uint8_t *data, float *fa, float *fb)
   *fb  = (ref[RIGHT]/32767.0)*(2.0*sense[RIGHT]-1.0);
 }
 
-double get_time_sec()
+double getTime_sec()
 {
-  static struct timeval tbase={-1,-1};
+  // static struct timeval tbase={-1,-1};
   struct timeval t;
-
   gettimeofday(&t,NULL);
-  if (tbase.tv_sec==-1 && tbase.tv_usec==-1)
-    {
-      tbase = t;
-    }
-  return ( t.tv_sec-tbase.tv_sec + (t.tv_usec-tbase.tv_usec)/1000000.0 );
+  // if (tbase.tv_sec==-1 && tbase.tv_usec==-1)
+  //   {
+  //     tbase = t;
+  //   }
+  // return ( t.tv_sec-tbase.tv_sec + (t.tv_usec-tbase.tv_usec)/1000000.0 );
+  return ( t.tv_sec + t.tv_usec/1000000.0 );
 }
+
 
 esp_err_t save_parameters(void* ptr_parameters)
 {
