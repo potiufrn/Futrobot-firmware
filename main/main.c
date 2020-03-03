@@ -77,7 +77,6 @@ static void func_identify(const uint8_t options,
 /*************************************************************************************/
 static xQueueHandle bt_queue = NULL;
 static xQueueHandle encoder_queue[2] = {NULL,NULL};
-static xQueueHandle controller_queue[2] = {NULL,NULL};
 
 static bool bypass_controller = true;
 
@@ -100,8 +99,6 @@ void app_main()
   bt_queue   = xQueueCreate(1, sizeof(bt_data));
   encoder_queue[LEFT]  = xQueueCreate(1, sizeof(struct Encoder_data));
   encoder_queue[RIGHT] = xQueueCreate(1, sizeof(struct Encoder_data));
-  controller_queue[LEFT]  = xQueueCreate(1, 0);
-  controller_queue[RIGHT] = xQueueCreate(1, 0);
 
   /** configuracoes iniciais **/
   //interrupcoes no nucleo 0, dos encoders e do bluetooth
@@ -174,24 +171,15 @@ static void IRAM_ATTR isr_EncoderLeft(const void* arg)
   static int8_t lookup_table[] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
   static uint8_t enc_v = 0;
 
-  static int8_t  previous = 0;
   static bool    aux = true;
   static double  time[2] = {0.0, 0.0};
 
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
 
-  if(xQueueReceiveFromISR(controller_queue[LEFT], NULL, 0) != 0)
-    memset(&my_data, 0, sizeof(struct Encoder_data));
-
-  if(lookup_table[enc_v & 0b1111] != 0)
-  {
-    my_data.pulses += lookup_table[enc_v & 0b1111];
-    previous = lookup_table[enc_v & 0b1111];
-  }else{
-    my_data.pulses += previous;
-  }
-
+  //WARNING: A logica atual se baseia em utilizar apenas as bordas de subida do canal A para calcular a velocidade
+  //mas a interrupcao como um todo faz uso de todas as bordas dos dois canais para a maxima precisao em estimar a orientacao
+  //estude uma possibilidade de melhorar a precisao utilizando mais do sensor
   if(arg)
   {
     if(aux)
@@ -217,24 +205,15 @@ static void IRAM_ATTR isr_EncoderRight(const void* arg)
 
   static bool   aux = true;
   static double k = 2.0*M_PI/3.0;
-  static int8_t previous = 0;
 
   enc_v <<= 2;
   reg_read = REG_READ(GPIO_IN_REG);
   enc_v |= (reg_read & LS(GPIO_OUTA_RIGHT)) >> (GPIO_OUTA_RIGHT-1);
   enc_v |= (reg_read & LS(GPIO_OUTB_RIGHT)) >> GPIO_OUTB_RIGHT;
 
-  if(xQueueReceiveFromISR(controller_queue[RIGHT], NULL, 0) != 0)
-    memset(&my_data, 0, sizeof(struct Encoder_data));
-
-  if(lookup_table[enc_v & 0b1111] != 0)
-  {
-    my_data.pulses += lookup_table[enc_v & 0b1111];
-    previous = lookup_table[enc_v & 0b1111];
-  }else{
-    my_data.pulses += previous;
-  }
-
+  //WARNING: A logica atual se baseia em utilizar apenas as bordas de subida do canal A para calcular a velocidade
+  //mas a interrupcao como um todo faz uso de todas as bordas dos dois canais para a maxima precisao em estimar a orientacao
+  //estude uma possibilidade de melhorar a precisao utilizando mais do sensor
   if(arg)
   {
     if(aux)
@@ -258,8 +237,12 @@ periodic_controller()
   const double k = M_PI/6.0;
   struct Encoder_data enc_datas[2];
 
-  float pwm[2] = {0.0, 0.0};
-  double omegaTemp[2] = {0.0, 0.0};
+  float    pwm[2] = {0.0, 0.0};
+  double   omegaPulso[2] = {0.0, 0.0};
+  double   omegaTime[2] = {0.0, 0.0};
+
+  double   prevCumOmega[2]= {0.0, 0.0};
+  uint64_t prevNOmegas[2] = {0, 0};
 
   double erro[2];
   double cumErro[2]= {0.0, 0.0};
@@ -267,6 +250,7 @@ periodic_controller()
 
   uint16_t countVelZero[2] = {1, 1}; //numero de contagem equivalente a 500ms no ciclo do controle
   uint8_t motor;
+  double diff;
   while(1)
   {
     vTaskDelay(TIME_CONTROLLER/portTICK_PERIOD_MS);
@@ -280,10 +264,11 @@ periodic_controller()
         if(countVelZero[motor] > TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER)
           omegaCurrent[motor] = 0;
       }else{
-        xQueueSend(controller_queue[motor], NULL, NULL);
-        omegaTemp[motor]    = enc_datas[motor].pulses*k/(TIME_CONTROLLER*(countVelZero[motor])/1000.0);
-        // if(enc_datas[motor].nOmegas!=0)omegaCurrent[motor] = enc_datas[motor].cumOmega/enc_datas[motor].nOmegas;
-        omegaCurrent[motor] = omegaTemp[motor];
+        diff = enc_datas[motor].nOmegas - prevNOmegas[motor];
+        if(diff != 0)omegaCurrent[motor] = (enc_datas[motor].cumOmega - prevCumOmega[motor])/diff;
+
+        prevCumOmega[motor] = enc_datas[motor].cumOmega;
+        prevNOmegas[motor]  = enc_datas[motor].nOmegas;
         countVelZero[motor] = 1;
       }
     }

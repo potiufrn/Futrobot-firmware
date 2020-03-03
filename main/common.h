@@ -89,7 +89,7 @@ typedef struct
 
 struct Encoder_data
 {
-  int64_t pulses; //quantidade de pulsos desde o inicio da interrupcao
+  // int64_t pulses; //quantidade de pulsos desde o inicio da interrupcao
   int64_t nOmegas;
   double  cumOmega;
 };
