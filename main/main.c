@@ -37,8 +37,8 @@
 
 // #define DEVICE_NAME "ESP_ROBO_TEST"
 // #define DEVICE_NAME "ESP_ROBO_1"
-// #define DEVICE_NAME "ESP_ROBO_2"
-#define DEVICE_NAME "ESP_ROBO_4"
+#define DEVICE_NAME "ESP_ROBO_2"
+// #define DEVICE_NAME "ESP_ROBO_4"
 
 #define GPIO_OUTPUT_PIN_SEL ((1ULL << GPIO_STBY)      | \
                              (1ULL << GPIO_A1N1_LEFT) | \
@@ -80,8 +80,8 @@ static xQueueHandle encoder_queue[2] = {NULL,NULL};
 
 static bool bypass_controller = true;
 
-static float omegaRef[2]     = {0.0, 0.0}; //-1.0 a 1.0
-static float omegaCurrent[2] = {0.0, 0.0}; //-1.0 a 1.0
+static float reference[2]    = {0.0, 0.0}; //-1.0 a 1.0
+static double omegaCurrent[2] = {0.0, 0.0}; //-1.0 a 1.0
 
 static struct Parameters parameters;
 
@@ -108,7 +108,7 @@ void app_main()
 
   //controlador no nucleo 1
   uint8_t  head, cmd;
-  float    *vec_float;
+  double    *vec_double;
   while(1){
       xQueueReceive(bt_queue, &btdata, portMAX_DELAY);
       head = btdata.data[0] & 0xF0;
@@ -117,14 +117,14 @@ void app_main()
       cmd = btdata.data[0] & 0x0F;
       switch (cmd) {
       case CMD_REF:
-        decodeFloat(btdata.data, &omegaRef[LEFT], &omegaRef[RIGHT]);
+        decodeFloat(btdata.data, &reference[LEFT], &reference[RIGHT]);
         if(bypass_controller)
           bypass_controller = false;
         break;
       case CMD_CONTROL_SIGNAL:
         bypass_controller = true;
-        decodeFloat(btdata.data, &omegaRef[LEFT], &omegaRef[RIGHT]);
-        func_controlSignal(omegaRef[LEFT], omegaRef[RIGHT]);
+        decodeFloat(btdata.data, &reference[LEFT], &reference[RIGHT]);
+        func_controlSignal(reference[LEFT], reference[RIGHT]);
         break;
       case CMD_PING:
         esp_spp_write(bt_handle, btdata.len, btdata.data);
@@ -134,27 +134,27 @@ void app_main()
                       *(float*)&btdata.data[2+0*sizeof(float)]);      //setpoint
         break;
       case CMD_SET_KP:
-        parameters.Kp[LEFT] = *(float*)&btdata.data[1 + 0*sizeof(float)];
-        parameters.Kp[RIGHT]= *(float*)&btdata.data[1 + 1*sizeof(float)];
+        parameters.Kp[LEFT] = *(double*)&btdata.data[1 + 0*sizeof(double)];
+        parameters.Kp[RIGHT]= *(double*)&btdata.data[1 + 1*sizeof(double)];
         save_parameters(&parameters);
         break;
       case CMD_CALIBRATION:
         func_calibration();
         break;
       case CMD_REQ_OMEGA:
-        esp_spp_write(bt_handle, 2*sizeof(float), (uint8_t*)omegaCurrent);
+        esp_spp_write(bt_handle, 2*sizeof(double), (uint8_t*)omegaCurrent);
         break;
       case CMD_REQ_CAL:
-        vec_float = (float*)malloc((9 + 2)*sizeof(float));//9 coef + 2 Kp
+        vec_double = (double*)malloc((9 + 2)*sizeof(double));//9 coef + 2 Kp
 
-        vec_float[0] = parameters.omegaMax;
-        memcpy(vec_float+1, parameters.coef, 8*sizeof(float));
+        vec_double[0] = parameters.omegaMax;
+        memcpy(vec_double+1, parameters.coef, 8*sizeof(double));
 
-        vec_float[9]  = parameters.Kp[LEFT];
-        vec_float[10] = parameters.Kp[RIGHT];
+        vec_double[9]  = parameters.Kp[LEFT];
+        vec_double[10] = parameters.Kp[RIGHT];
 
-        esp_spp_write(bt_handle, (9+2)*sizeof(float), (uint8_t*)vec_float);
-        free(vec_float);
+        esp_spp_write(bt_handle, (9+2)*sizeof(double), (uint8_t*)vec_double);
+        free(vec_double);
 
         break;
       default:
@@ -185,7 +185,7 @@ static void IRAM_ATTR isr_EncoderLeft(const void* arg)
     if(aux)
     {
       time[1] = esp_timer_get_time()/1000000.0;
-      my_data.cumOmega += (double)lookup_table[enc_v & 0b1111]*k/(time[1] - time[0])*(!!time[0]);//rad/s
+      my_data.cumOmega += (double)lookup_table[enc_v & 0b1111]*(k/(time[1] - time[0]))*(!!time[0]);//rad/s
       time[0] = time[1];
       my_data.nOmegas++;
     }
@@ -219,7 +219,7 @@ static void IRAM_ATTR isr_EncoderRight(const void* arg)
     if(aux)
     {
       time[1] = esp_timer_get_time()/1000000.0;
-      my_data.cumOmega += (double)lookup_table[enc_v & 0b1111]*k/(time[1] - time[0])*(!!time[0]);//rad/s
+      my_data.cumOmega += (double)lookup_table[enc_v & 0b1111]*(k/(time[1] - time[0]))*(!!time[0]);//rad/s
       time[0] = time[1];
       my_data.nOmegas++;
     }
@@ -232,21 +232,14 @@ static void IRAM_ATTR isr_EncoderRight(const void* arg)
 static void
 periodic_controller()
 {
-  //Sabendo que uma volta completa no eixo do encoder gera 12 interrupcoes
-  //ou seja, 2pi => 12 interrupcoes
-  const double k = M_PI/6.0;
   struct Encoder_data enc_datas[2];
-
   float    pwm[2] = {0.0, 0.0};
-  double   omegaPulso[2] = {0.0, 0.0};
-  double   omegaTime[2] = {0.0, 0.0};
 
   double   prevCumOmega[2]= {0.0, 0.0};
   uint64_t prevNOmegas[2] = {0, 0};
 
   double erro[2];
-  double cumErro[2]= {0.0, 0.0};
-  double ref_rad[2];
+  double omegaRef[2];
 
   uint16_t countVelZero[2] = {1, 1}; //numero de contagem equivalente a 500ms no ciclo do controle
   uint8_t motor;
@@ -264,6 +257,7 @@ periodic_controller()
         if(countVelZero[motor] > TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER)
           omegaCurrent[motor] = 0;
       }else{
+
         diff = enc_datas[motor].nOmegas - prevNOmegas[motor];
         if(diff != 0)omegaCurrent[motor] = (enc_datas[motor].cumOmega - prevCumOmega[motor])/diff;
 
@@ -276,31 +270,22 @@ periodic_controller()
 
     if(bypass_controller)
     {
-      func_controlSignal(omegaRef[LEFT], omegaRef[RIGHT]);
+      func_controlSignal(reference[LEFT], reference[RIGHT]);
       continue;
     }
 
     //Controlador
     for(motor = 0; motor < 2; motor++)
     {
-      ref_rad[motor] = omegaRef[motor]*parameters.omegaMax;
-      erro[motor]    = ref_rad[motor] - omegaCurrent[motor];    // rad/s [-omegaMaximo, omegaMaximo]
-
-      /** PI **/
-      // if(pwm[i] < 0.90 && pwm[i] > -0.90)cumErro[i]  = cumErro[i] + erro[i]*(TIME_CONTROLLER/1000.0);
-      // pwm[i]  = (parameters.Kp[i]*erro[i] + (parameters.Kp[i]/parameters.Ti[i])*cumErro[i])*!!ref_rad[i]; // PU [-1.0, 1.0]
+      omegaRef[motor] = reference[motor]*parameters.omegaMax;
+      // erro[motor]    = omegaRef[motor] - omegaCurrent[motor];    // rad/s [-omegaMaximo, omegaMaximo]
       // pwm[i] = erro[i]*parameters.Kp[i];
-
-      pwm[motor]  = parameters.coef[MS2i(motor, F_IS_NEG(omegaRef[motor]))].ang*ref_rad[motor] +
-                    parameters.coef[MS2i(motor, F_IS_NEG(omegaRef[motor]))].lin*(!!omegaRef[motor]);
+      pwm[motor]  = parameters.coef[MS2i(motor, F_IS_NEG(reference[motor]))].ang*omegaRef[motor] +
+                    parameters.coef[MS2i(motor, F_IS_NEG(reference[motor]))].lin*(!!reference[motor]);
     }
-
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
-
-    //INFO: !!omegaRef eh para zerar a contribuicao do lin quando omega_Ref for zero e para nao influenciar no valor quando for diferente de 0, pois com "!!" esse valor ou e 0 ou 1.
   }
 }
-
 //WARNING usar o acesso direto aos registradores para efetuar as operacoes de
 //mudanca de nivel dos gpios. Obs.: tambem eh possivel alterar o dutycicle por registradores
 static void func_controlSignal(const float pwmL,const float pwmR)
@@ -333,7 +318,7 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         break;
     case ESP_SPP_CLOSE_EVT:
         bt_handle = 0;
-        memset(omegaRef, 0, 2*sizeof(float));
+        memset(reference, 0, 2*sizeof(float));
         bypass_controller = true;
         break;
     case ESP_SPP_START_EVT:
@@ -360,60 +345,52 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 //Refazer
 static void func_calibration()
 {
-  memset(omegaRef, 0, 2*sizeof(float));
+  memset(reference, 0, 2*sizeof(float));
   bypass_controller = true;
 
-  #define TIME_MS_WAIT           500
-  #define MIN_INIT               0.2
-  #define TIME_MS_WAIT_MIN       500
-  #define TIME_MS_WAIT_VEL_MAX  1000
-  const float STEP = 10.0/32767.0;    //devido a resolucao de 15 bits na transmissao da ref
+  #define TIME_MS_WAIT          1000
+  #define N_POINTS                20
+  #define MIN_PWM                0.1
+  #define STEP                  (1.0 - MIN_PWM)/((float)N_POINTS)
 
-  float omegaMax_tmp[4];
-  float pwmMin[4];
-  float minOmegaMax = 999999.9;
-  float refmin;
+  double omegaMax_tmp;
+  double minOmegaMax = 999999.9;
 
-  ESP_LOGI("POTI_INFO", "Motor | Sense | OmegaMax | OmegaMin | PWMmax |  PWMmin |");
+  double v_omega[N_POINTS];
+  double v_pwm[N_POINTS];
+  double K;
   for(int motor = 0; motor < 2; motor++)
   {
-    memset(omegaRef, 0, 2*sizeof(float));
+    memset(reference, 0, 2*sizeof(float));
     for(int sense = 0; sense < 2; sense++)
     {
-      //medir velocidade maxima
-      //esse trecho seginte eh para evitar uma subida abrupta de 0 a 100% de pwm
-      omegaRef[motor] = 0.7 - 2*0.7*(sense);
+      reference[motor] = 0.0;
       vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
-      //equacao para dar 1 quando sense == 0, e -1 para sense == 1
-      omegaRef[motor] = 1.0 - 2.0*(sense);
-      vTaskDelay(TIME_MS_WAIT_VEL_MAX/portTICK_PERIOD_MS);
-      omegaMax_tmp[MS2i(motor, sense)] = ABS_F(omegaCurrent[motor]);
-      minOmegaMax = (omegaMax_tmp[MS2i(motor, sense)] < minOmegaMax)?omegaMax_tmp[MS2i(motor, sense)]:minOmegaMax;
 
-      //medir pwm minimo
-      //Ideia base: reduzir ref(pwm) ate descobrir o minimo necessario para fazer o motor rotacionar.
-      refmin = MIN_INIT - 2.0*MIN_INIT*sense;
-      float minOmega = 0.0;
-      while(omegaCurrent[motor] != 0.0)
+      for(int i = 0; i < N_POINTS; i++)
       {
-        minOmega = omegaCurrent[motor];
-        refmin += 2*STEP*sense - STEP;
-        omegaRef[motor] = refmin;
-        vTaskDelay(TIME_MS_WAIT_MIN/portTICK_PERIOD_MS);
+        v_pwm[i] = (sense == 0)?MIN_PWM + STEP*i: -MIN_PWM - STEP*i;
+        reference[motor] = v_pwm[i];
+        vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
+        v_omega[i]= omegaCurrent[motor];
       }
 
-      pwmMin[MS2i(motor, sense)] = refmin;
+      linearReg(v_omega, v_pwm, N_POINTS,
+                &parameters.coef[MS2i(motor, sense)].ang,
+                &parameters.coef[MS2i(motor, sense)].lin);
 
-      ESP_LOGI("POTI_INFO", " %d   |  %d   |   %f     |    %f    |   %d   |    %f   |",
-                            motor, sense, omegaMax_tmp[MS2i(motor, sense)], minOmega, 2-1*sense, pwmMin[MS2i(motor, sense)]);
+      minOmegaMax = (ABS_F(v_omega[N_POINTS-1]) < minOmegaMax)?ABS_F(v_omega[N_POINTS-1]):minOmegaMax;
 
-      //Calculo dos coef.
-      parameters.coef[MS2i(motor, sense)].ang  = (1.0 - ABS_F(pwmMin[MS2i(motor, sense)]))/(omegaMax_tmp[MS2i(motor, sense)] - minOmega);
-      parameters.coef[MS2i(motor, sense)].ang  = ABS_F(parameters.coef[MS2i(motor, sense)].ang);
-      parameters.coef[MS2i(motor, sense)].lin  = pwmMin[MS2i(motor, sense)] - minOmega*parameters.coef[MS2i(motor, sense)].ang;
+      ESP_LOGI("POTI_INFO", "Motor:%d Sense:%d a:%f b:%f",
+               motor, sense, parameters.coef[MS2i(motor, sense)].ang,
+                             parameters.coef[MS2i(motor, sense)].lin);
     }
+    //calculando tau
+    // K = 1.0/parameters.coef[MS2i(motor, sense)].ang;
+    // calcular Tau, para 63% da velocidade maxima
+    
   }
-  memset(omegaRef, 0, 2*sizeof(float));
+  memset(reference, 0, 2*sizeof(float));
 
   //Maior velocidade considerada
   parameters.omegaMax = 0.90*ABS_F(minOmegaMax);
@@ -426,29 +403,29 @@ static void func_calibration()
 static void func_identify(const uint8_t options,const float setpoint)
 {
   bypass_controller  = !!(options & 0x7F);  //bypass ou nao o controlador
+  float timeout = 2.0;
 
   int motor_identify     = ((options & 0x80) >> 7) & 0x01;
-  int size = 2.0/(TIME_CONTROLLER/1000.0); //captura durante 2 segundos a cada ciclo de controle vai gerar 'size' floats de dados lidos
-  float *vec_omegas_identify = (float*)malloc(size*sizeof(float));
-  memset(vec_omegas_identify, 0, size*sizeof(float));
+  int size = timeout/(TIME_CONTROLLER/1000.0); //captura durante 2 segundos a cada ciclo de controle vai gerar 'size' floats de dados lidos
+  double *vec_omegas_identify = (double*)malloc(size*sizeof(double));
+  memset(vec_omegas_identify, 0, size*sizeof(double));
 
-  int steptime = 2000/size;
-  omegaRef[motor_identify]  = setpoint;
+  reference[motor_identify]  = setpoint;
   vec_omegas_identify[0] = setpoint*parameters.omegaMax; //aqui eu uso o primeiro float do vetor para guardar a ref. em rad/s
   for(int i = 1; i < size; i++)
   {
-    vTaskDelay(steptime/portTICK_PERIOD_MS);  //aguarda os 2s
+    vTaskDelay(TIME_CONTROLLER/portTICK_PERIOD_MS);  //aguarda os 2s
     vec_omegas_identify[i] = omegaCurrent[motor_identify];
   }
-  memset(omegaRef, 0, 2*sizeof(float));
+  memset(reference, 0, 2*sizeof(float));
 
   //envia a informacao de quantas medidas foram realizadas
   esp_spp_write(bt_handle, sizeof(int), &size);
   //enviar em blocos de 200, observei que o maximo de bytes transmitidos esta sendo de 990 bytes
   //que equivale a 247.5 floats
   //transmissao dos dados em bloco de 200
-  for(int i = 0; i < size; i += 200)
-    esp_spp_write(bt_handle, (200)*sizeof(float), (uint8_t*)vec_omegas_identify+i);
+  for(int i = 0; i < size; i += 100)
+    esp_spp_write(bt_handle, (100)*sizeof(double), (uint8_t*)(vec_omegas_identify+i));
 
   free(vec_omegas_identify);
 }
@@ -470,13 +447,6 @@ static void _setup()
     ESP_LOGE("POTI_ERRO","Falha ao carregar os parametros, erro:%s", esp_err_to_name(err));
     // if(err == ESP_ERR_NVS_NOT_FOUND)//este esp ainda nao possui dados salvos na memoria
   }
-
-  //parametros para posicionar os polos em -30
-  parameters.Kp[LEFT] = 0.0003;
-  parameters.Ti[LEFT] = parameters.Kp[LEFT]/0.001;
-
-  parameters.Kp[RIGHT] = 0.00003;
-  parameters.Ti[RIGHT] = parameters.Kp[RIGHT]/0.001;
 
   //Config. Bluetooth
   esp_bt_controller_mem_release(ESP_BT_MODE_BLE);

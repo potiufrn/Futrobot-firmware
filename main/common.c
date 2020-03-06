@@ -28,19 +28,23 @@ void decodeFloat(const uint8_t *data, float *fa, float *fb)
   *fb  = (ref[RIGHT]/32767.0)*(2.0*sense[RIGHT]-1.0);
 }
 
-double getTime_sec()
+void linearReg(double x[], double y[], uint8_t n, double *ang, double *lin)
 {
-  // static struct timeval tbase={-1,-1};
-  struct timeval t;
-  gettimeofday(&t,NULL);
-  // if (tbase.tv_sec==-1 && tbase.tv_usec==-1)
-  //   {
-  //     tbase = t;
-  //   }
-  // return ( t.tv_sec-tbase.tv_sec + (t.tv_usec-tbase.tv_usec)/1000000.0 );
-  return ( t.tv_sec + t.tv_usec/1000000.0 );
-}
+  double Sx = 0.0, Sy = 0.0, Sxx = 0.0, Sxy = 0.0;
+  double D;
 
+  for(int i = 0; i < n; i++)
+  {
+    Sx += x[i];
+    Sy += y[i];
+    Sxx+= x[i]*x[i];
+    Sxy+= x[i]*y[i];
+  }
+  D = n*Sxx - Sx*Sx;
+
+  *ang = (n*Sxy - Sx*Sy)/D;
+  *lin = (Sy*Sxx - Sx*Sxy)/D;
+}
 
 esp_err_t save_parameters(void* ptr_parameters)
 {
