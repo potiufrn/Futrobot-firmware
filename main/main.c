@@ -37,8 +37,8 @@
 
 // #define DEVICE_NAME "ESP_ROBO_TEST"
 // #define DEVICE_NAME "ESP_ROBO_1"
-#define DEVICE_NAME "ESP_ROBO_2"
-// #define DEVICE_NAME "ESP_ROBO_4"
+// #define DEVICE_NAME "ESP_ROBO_2"
+#define DEVICE_NAME "ESP_ROBO_4"
 
 #define GPIO_OUTPUT_PIN_SEL ((1ULL << GPIO_STBY)      | \
                              (1ULL << GPIO_A1N1_LEFT) | \
@@ -145,15 +145,17 @@ void app_main()
         esp_spp_write(bt_handle, 2*sizeof(double), (uint8_t*)omegaCurrent);
         break;
       case CMD_REQ_CAL:
-        vec_double = (double*)malloc((9 + 2)*sizeof(double));//9 coef + 2 Kp
+        vec_double = (double*)malloc((9 + 4)*sizeof(double));//9 coef + 4 Kp
 
         vec_double[0] = parameters.omegaMax;
         memcpy(vec_double+1, parameters.coef, 8*sizeof(double));
 
-        vec_double[9]  = parameters.Kp[LEFT];
-        vec_double[10] = parameters.Kp[RIGHT];
+        vec_double[9]  = parameters.Kp[LEFT << 1 | FRONT];
+        vec_double[10] = parameters.Kp[LEFT << 1 | BACK];
+        vec_double[11] = parameters.Kp[RIGHT<< 1 | FRONT];
+        vec_double[12] = parameters.Kp[RIGHT<< 1 | BACK];
 
-        esp_spp_write(bt_handle, (9+2)*sizeof(double), (uint8_t*)vec_double);
+        esp_spp_write(bt_handle, (9+4)*sizeof(double), (uint8_t*)vec_double);
         free(vec_double);
 
         break;
@@ -278,9 +280,13 @@ periodic_controller()
     for(motor = 0; motor < 2; motor++)
     {
       omegaRef[motor] = reference[motor]*parameters.omegaMax;
-      // erro[motor]    = omegaRef[motor] - omegaCurrent[motor];    // rad/s [-omegaMaximo, omegaMaximo]
-      // pwm[i] = erro[i]*parameters.Kp[i];
-      pwm[motor]  = parameters.coef[MS2i(motor, F_IS_NEG(reference[motor]))].ang*omegaRef[motor] +
+      erro[motor]= omegaRef[motor] - omegaCurrent[motor];    // rad/s [-omegaMaximo, omegaMaximo]
+
+      //Ação proporcional
+      pwm[motor] = erro[motor]*parameters.Kp[MS2i(motor, F_IS_NEG(reference[motor]))];
+
+      //Forward
+      pwm[motor] += parameters.coef[MS2i(motor, F_IS_NEG(reference[motor]))].ang*omegaRef[motor] +
                     parameters.coef[MS2i(motor, F_IS_NEG(reference[motor]))].lin*(!!reference[motor]);
     }
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
@@ -349,7 +355,7 @@ static void func_calibration()
   bypass_controller = true;
 
   #define TIME_MS_WAIT          1000
-  #define N_POINTS                20
+  #define N_POINTS                50
   #define MIN_PWM                0.1
   #define STEP                  (1.0 - MIN_PWM)/((float)N_POINTS)
 
@@ -359,6 +365,8 @@ static void func_calibration()
   double v_omega[N_POINTS];
   double v_pwm[N_POINTS];
   double K;
+  double tau = 0.0;
+
   for(int motor = 0; motor < 2; motor++)
   {
     memset(reference, 0, 2*sizeof(float));
@@ -384,11 +392,40 @@ static void func_calibration()
       ESP_LOGI("POTI_INFO", "Motor:%d Sense:%d a:%f b:%f",
                motor, sense, parameters.coef[MS2i(motor, sense)].ang,
                              parameters.coef[MS2i(motor, sense)].lin);
+
+      reference[motor] = 0.0;
+      vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
+
+
+      //Para evitar contas apos a medida do omega, resolvi com essa estrutura de codigo maior.
+      double prevTime;
+      double checkpoint = v_omega[N_POINTS - 1]*0.632; //Pela teoria, tau => ~= 63.2% do valor de regime
+      if(sense == 0)
+      {
+        reference[motor] = 1.0;
+        prevTime = esp_timer_get_time();
+        while(omegaCurrent[motor] < checkpoint)
+        {
+          tau = esp_timer_get_time();
+        }
+      }else{
+        reference[motor] = -1.0;
+        prevTime = esp_timer_get_time();
+        while(omegaCurrent[motor] > checkpoint)
+        {
+          tau = esp_timer_get_time();
+        }
+      }
+      reference[motor] = 0.0;
+
+      tau = (tau - prevTime)/1000000.0;
+      K  = 1.0/parameters.coef[MS2i(motor, sense)].ang;
+      parameters.Kp[MS2i(motor, sense)] = (Sd*tau - 1.0)/K;
+
+      ESP_LOGI("POTI_INFO", "tau:%lf K:%lf Kp:%lf", tau, K, parameters.Kp[MS2i(motor, sense)]);
     }
-    //calculando tau
-    // K = 1.0/parameters.coef[MS2i(motor, sense)].ang;
-    // calcular Tau, para 63% da velocidade maxima
-    
+
+
   }
   memset(reference, 0, 2*sizeof(float));
 

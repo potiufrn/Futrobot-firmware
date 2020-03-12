@@ -28,7 +28,7 @@
 /*************************************************************************************/
 #define TIME_TEST_OMEGA_ZERO  500   //ms, tempo do timer que realiza o teste de velocidade zero
 #define TIME_CONTROLLER         5   //ms, periodo de acionamento do controlador
-#define Sd                    -30
+#define Sd                   30.0   //polo desejado, por testes empiricos o maximo que o sistema chega eh em torno de 35, 40
 
 /*************************************************************************************/
 /****************************** ROTINAS PRINCIPAIS ***********************************/
@@ -100,8 +100,8 @@ struct Encoder_data
 struct Parameters
 {
   struct CoefLine coef[4];
+  double Kp[4];
   double omegaMax;
-  double Kp[2];
 };
 /*************************************************************************************/
 /****************************** FUNCOES AUXILIARES ***********************************/
