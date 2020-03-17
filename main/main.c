@@ -397,7 +397,7 @@ static void func_calibration()
       vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
 
 
-      //Para evitar contas apos a medida do omega, resolvi com essa estrutura de codigo maior.
+      //Para evitar contas apos a medida do omega, resolvi usar essa estrutura de codigo maior.
       double prevTime;
       double checkpoint = v_omega[N_POINTS - 1]*0.632; //Pela teoria, tau => ~= 63.2% do valor de regime
       if(sense == 0)
@@ -527,7 +527,7 @@ static void _setup()
   mcpwm_set_pin(MCPWM_UNIT_0, &pin_configLeft);
 
   mcpwm_config_t pwm_config;
-  pwm_config.frequency = 10000;    //frequency = 10kHz
+  pwm_config.frequency = 1000;    //frequency = 1kHz
   pwm_config.cmpr_a = 0.0;       //duty cycle of PWMxA = 0.0%
   pwm_config.cmpr_b = 0.0;       //duty cycle of PWMxA = 0.0%
   pwm_config.counter_mode = MCPWM_UP_COUNTER;
