@@ -1,9 +1,3 @@
-/**
- *  Programa teste para o controle local FeedForward
- *  O programa ira identificar a relacao entre PWM e Velocidade de cada motor para cada
- *  sentido de rotacao
- **/
-
  //Doc util:
 // https://www.pjrc.com/teensy/td_libs_Encoder.html#optimize
 // https://github.com/igorantolic/ai-esp32-rotary-encoder/tree/master/src
