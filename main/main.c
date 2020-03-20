@@ -2,19 +2,18 @@
 // https://www.pjrc.com/teensy/td_libs_Encoder.html#optimize
 // https://github.com/igorantolic/ai-esp32-rotary-encoder/tree/master/src
 
+// #include <time.h>
+// #include <sys/time.h>
 #include <string.h>
-#include <time.h>
-#include <sys/time.h>
 #include <math.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-#include "freertos/semphr.h"
 
-#include "driver/gpio.h"
-#include "driver/timer.h"
-#include "driver/mcpwm.h"
+#include "driver/gpio.h"  //gpio
+#include "driver/mcpwm.h" //mcpwm
+#include "driver/timer.h" //esp_timer_get_time
 
 //Bluetooth
 #include "esp_bt.h"
@@ -50,8 +49,8 @@
 /*************************************************************************************/
 static void _setup();
 //interruptions and callbacks
-static void IRAM_ATTR isr_EncoderLeft(const void*  arg);
-static void IRAM_ATTR isr_EncoderRight(const void* arg);
+static void IRAM_ATTR isr_EncoderLeft();
+static void IRAM_ATTR isr_EncoderRight();
 static void esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
 static void periodic_controller();
 //my functions
@@ -160,7 +159,7 @@ void app_main()
 }
 //***************************************************************************************
 //this function costs about 50us
-static void IRAM_ATTR isr_EncoderLeft(const void* arg)
+static void IRAM_ATTR isr_EncoderLeft()
 {
   static struct Encoder_data my_data = {0, 0.0};
   static double k = 2.0*M_PI/3.0;
@@ -191,7 +190,7 @@ static void IRAM_ATTR isr_EncoderLeft(const void* arg)
   xQueueSendFromISR(encoder_queue[LEFT], &my_data, NULL);
 }
 //this function costs about 50us
-static void IRAM_ATTR isr_EncoderRight(const void* arg)
+static void IRAM_ATTR isr_EncoderRight()
 {
   static int8_t  lookup_table[] = { 0,-1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
   static uint8_t  enc_v = 0;
@@ -500,33 +499,40 @@ static void _setup()
   io_conf.pull_up_en = 0;
   gpio_config(&io_conf);
 
-  io_conf.intr_type = GPIO_INTR_ANYEDGE;
-  io_conf.mode = GPIO_MODE_INPUT;
-  io_conf.pull_down_en = 0;
-  io_conf.pull_up_en = 1;
-  io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
-  gpio_config(&io_conf);
 
-  gpio_install_isr_service(0);
-  gpio_isr_handler_add(GPIO_OUTA_LEFT, isr_EncoderLeft, 0);
-  gpio_isr_handler_add(GPIO_OUTB_LEFT, isr_EncoderLeft, 1);
+  /*Mapea os pinos para o Motor Control PWM*/
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, GPIO_PWM_LEFT);
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, GPIO_PWM_RIGHT);
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM_CAP_0, GPIO_OUTA_LEFT);
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM_CAP_1, GPIO_OUTB_LEFT);
+  mcpwm_gpio_init(MCPWM_UNIT_1, MCPWM_CAP_0, GPIO_OUTA_RIGHT);
+  mcpwm_gpio_init(MCPWM_UNIT_1, MCPWM_CAP_1, GPIO_OUTB_RIGHT);
 
-  gpio_isr_handler_add(GPIO_OUTA_RIGHT,isr_EncoderRight, 0);
-  gpio_isr_handler_add(GPIO_OUTB_RIGHT,isr_EncoderRight, 1);
+  mcpwm_capture_enable(MCPWM_UNIT_0, MCPWM_SELECT_CAP0, MCPWM_POS_EDGE, 0);  //capture signal on rising edge, pulse num = 0 i.e. 800,000,000 counts is equal to one second
+  mcpwm_capture_enable(MCPWM_UNIT_0, MCPWM_SELECT_CAP1, MCPWM_POS_EDGE, 0);  //capture signal on rising edge, pulse num = 0 i.e. 800,000,000 counts is equal to one second
 
-  mcpwm_pin_config_t pin_configLeft = {
-      .mcpwm0a_out_num = GPIO_PWM_LEFT,
-      .mcpwm0b_out_num = GPIO_PWM_RIGHT,
-  };
-  mcpwm_set_pin(MCPWM_UNIT_0, &pin_configLeft);
+  mcpwm_capture_enable(MCPWM_UNIT_1, MCPWM_SELECT_CAP0, MCPWM_POS_EDGE, 0);  //capture signal on rising edge, pulse num = 0 i.e. 800,000,000 counts is equal to one second
+  mcpwm_capture_enable(MCPWM_UNIT_1, MCPWM_SELECT_CAP1, MCPWM_POS_EDGE, 0);  //capture signal on rising edge, pulse num = 0 i.e. 800,000,000 counts is equal to one second
 
+  // MCPWM[MCPWM_UNIT_0]->int_ena.val = (CAP0_INT_EN | CAP1_INT_EN);  //Enable interrupt on  CAP0, CAP1 and CAP2 signal
+  mcpwm_isr_register(MCPWM_UNIT_0, isr_EncoderLeft, NULL, ESP_INTR_FLAG_IRAM, NULL);  //Set ISR Handler
+  mcpwm_isr_register(MCPWM_UNIT_1, isr_EncoderRight, NULL, ESP_INTR_FLAG_IRAM, NULL);  //Set ISR Handler
+
+  //config. dos canais de PWM
+  //PWM freq. 1Khz, up_counter, duty cyclo initial 0
   mcpwm_config_t pwm_config;
-  pwm_config.frequency = 1000;    //frequency = 1kHz
+  pwm_config.frequency = 10000;  //frequency = 10kHz
   pwm_config.cmpr_a = 0.0;       //duty cycle of PWMxA = 0.0%
   pwm_config.cmpr_b = 0.0;       //duty cycle of PWMxA = 0.0%
   pwm_config.counter_mode = MCPWM_UP_COUNTER;
   pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
   mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);   //Configure PWM0A & PWM0B with above settings
+
+  //Habilia pullup nos pinos dos encoders
+  gpio_pulldown_en(GPIO_OUTA_LEFT);
+  gpio_pulldown_en(GPIO_OUTB_LEFT);
+  gpio_pulldown_en(GPIO_OUTA_RIGHT);
+  gpio_pulldown_en(GPIO_OUTB_RIGHT);
 
   vTaskDelete(NULL);
 }

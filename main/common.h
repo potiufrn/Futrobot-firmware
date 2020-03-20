@@ -47,6 +47,12 @@
 #define  GPIO_B1N2_RIGHT   17  // Sentido motor B
 #define  GPIO_OUTA_RIGHT   15  //Sinal de saida do encoder Esquerdo (usado para calcular a velocidade)
 #define  GPIO_OUTB_RIGHT    4  //Sinal em quadrado com relacao ao CAP0A do motor 1 (usado para identificar o sentido de rotacao)
+
+/*MCPWM*/
+/*https://docs.espressif.com/projects/esp-idf/en/latest/api-reference/peripherals/mcpwm.html*/
+#define CAP0_INT_EN BIT(27)  //Capture 0 interrupt bit
+#define CAP1_INT_EN BIT(28)  //Capture 1 interrupt bit
+static mcpwm_dev_t *MCPWM[2] = {&MCPWM0, &MCPWM1};
 /*************************************************************************************/
 /****************************** MACROS, ESTRUCT E ENUM *******************************/
 /*************************************************************************************/
