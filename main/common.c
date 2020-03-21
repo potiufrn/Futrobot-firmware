@@ -56,7 +56,7 @@ esp_err_t save_parameters(void* ptr_parameters)
   if (err != ESP_OK) return err;
 
   // Write value including previously saved blob if available
-  err = nvs_set_blob(my_handle, "param_page", ptr_parameters, sizeof(struct Parameters));
+  err = nvs_set_blob(my_handle, "param_page", ptr_parameters, sizeof(parameters_t));
 
   if (err != ESP_OK) return err;
 
@@ -79,7 +79,7 @@ esp_err_t load_parameters(void* ptr_parameters)
   if (err != ESP_OK) return err;
 
   // Read the size of memory space required for blob
-  size_t required_size = sizeof(struct Parameters);  // value will default to 0, if not set yet in NVS
+  size_t required_size = sizeof(parameters_t);  // value will default to 0, if not set yet in NVS
   err = nvs_get_blob(my_handle, "param_page", ptr_parameters, &required_size);
   if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;
 

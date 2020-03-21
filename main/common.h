@@ -1,5 +1,9 @@
 #include <stdint.h>
 
+#include "driver/mcpwm.h" //mcpwm
+#include "soc/mcpwm_reg.h"
+#include "soc/mcpwm_struct.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
@@ -47,6 +51,13 @@
 #define  GPIO_B1N2_RIGHT   17  // Sentido motor B
 #define  GPIO_OUTA_RIGHT   15  //Sinal de saida do encoder Esquerdo (usado para calcular a velocidade)
 #define  GPIO_OUTB_RIGHT    4  //Sinal em quadrado com relacao ao CAP0A do motor 1 (usado para identificar o sentido de rotacao)
+
+/*MCPWM*/
+/*https://docs.espressif.com/projects/esp-idf/en/latest/api-reference/peripherals/mcpwm.html*/
+#define CLK_BASE 80000000.0
+#define CAP0_INT_EN BIT(27)  //Capture 0 interrupt bit
+#define CAP1_INT_EN BIT(28)  //Capture 1 interrupt bit
+static mcpwm_dev_t *MCPWM[2] = {&MCPWM0, &MCPWM1};
 /*************************************************************************************/
 /****************************** MACROS, ESTRUCT E ENUM *******************************/
 /*************************************************************************************/
@@ -77,32 +88,35 @@
 enum ROTATE_S{ FRONT, BACK};
 enum MOTOR{ LEFT, RIGHT};
 
-struct CoefLine
+typedef struct
 {
   double ang; //coef. angular da reta
   double lin;  //coef. linear da reta
-};
+}coefLine_t;
+
 typedef struct
 {
   uint8_t *data;
   uint32_t len;
-}bt_data;
+}bt_data_t;
 
-struct Encoder_data
+typedef struct
 {
-  int64_t nOmegas;
-  double  cumOmega;
-};
+  int64_t nOmegas;   //quantidade de omegas somados
+  double  cumOmega;  //soma dos omegas
+  double  rawOmega; //ultimo omega medido
+  double  omega;     //omega filtrado
+}encoder_data_t;
 
 //WARNING: Ainda nao como o sistema se comportar ao alterar a struct Parameters, aumento ou diminuindo o
 //numero de variaveis que ela contem, e tentar realizar a leitura ou escrita no espaco de memoria usado
 //antes da alteracao
-struct Parameters
+typedef struct
 {
-  struct CoefLine coef[4];
+  coefLine_t coef[4];
   double Kp[4];
   double omegaMax;
-};
+}parameters_t;
 /*************************************************************************************/
 /****************************** FUNCOES AUXILIARES ***********************************/
 /*************************************************************************************/
