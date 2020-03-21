@@ -1,10 +1,10 @@
 # put here your custom config value
-menu "Example Configuration"
-config ESP_WIFI_SSID
-    string "WiFi SSID"
-    default "myssid"
+menu "Nome do ESP"
+config  ESP_NAME
+    string "Esp Name"
+    default "Teste"
     help
-	SSID (network name) for the example to connect to.
+  comentario aleatorio
 
 config ESP_WIFI_PASSWORD
     string "WiFi Password"

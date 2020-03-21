@@ -1,114 +1,39 @@
-/**
- *  Programa teste para o controle local FeedForward
- *  O programa ira identificar a relacao entre PWM e Velocidade de cada motor para cada
- *  sentido de rotacao
- **/
-
- //Doc util:
-// https://www.pjrc.com/teensy/td_libs_Encoder.html#optimize
-// https://github.com/igorantolic/ai-esp32-rotary-encoder/tree/master/src
-
-#include <string.h>
-#include <time.h>
-#include <sys/time.h>
-#include <math.h>
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
-#include "freertos/semphr.h"
-
-#include "driver/gpio.h"
-#include "driver/timer.h"
-#include "driver/mcpwm.h"
-
-//Bluetooth
-#include "esp_bt.h"
-#include "esp_bt_main.h"
-#include "esp_gap_bt_api.h"
-#include "esp_bt_device.h"
-#include "esp_spp_api.h"
-#include "esp_attr.h"
-
 #include "common.h"
-
-#include <stdio.h>
-#include "esp_log.h"
-
-// #define DEVICE_NAME "ESP_ROBO_TEST"
-// #define DEVICE_NAME "ESP_ROBO_1"
-// #define DEVICE_NAME "ESP_ROBO_2"
-#define DEVICE_NAME "ESP_ROBO_4"
-
-#define GPIO_OUTPUT_PIN_SEL ((1ULL << GPIO_STBY)      | \
-                             (1ULL << GPIO_A1N1_LEFT) | \
-                             (1ULL << GPIO_A1N2_LEFT) | \
-                             (1ULL << GPIO_B1N1_RIGHT)| \
-                             (1ULL << GPIO_B1N2_RIGHT))
-
-#define GPIO_INPUT_PIN_SEL ( (1ULL << GPIO_OUTA_LEFT)  | \
-                             (1ULL << GPIO_OUTB_LEFT)  | \
-                             (1ULL << GPIO_OUTA_RIGHT) | \
-                             (1ULL << GPIO_OUTB_RIGHT))
-
-/*************************************************************************************/
+/****************************** VARIAVEIS GLOBAIS ************************************/
+static xQueueHandle bt_queue = NULL;
+static xQueueHandle encoder_queue[2] = {NULL,NULL};
+static bool bypass_controller = true;
+static float  reference[2]    = {0.0, 0.0}; //-1.0 a 1.0
+static double omegaCurrent[2] = {0.0, 0.0}; //-1.0 a 1.0
+static parameters_t parameters;
+//Identificador do Bluetooth
+static uint32_t bt_handle = 0;
 /********************************* CABEÇALHOS ****************************************/
-/*************************************************************************************/
 static void _setup();
 //interruptions and callbacks
 static void IRAM_ATTR isr_EncoderLeft(const void*  arg);
 static void IRAM_ATTR isr_EncoderRight(const void* arg);
 static void esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
 static void periodic_controller();
-//my functions
-static void func_controlSignal(const float pwmL,const float pwmR);
 static void func_calibration();
-//options = 0xXY, sendo X 1 bit para indicar o motor, e os demais bits 7bits da parte Y indicando opcoes para o controlador utilizado,
-//por enquanto Y serão:
-// 0 => controlador padrao
-// 1 => bypass controlador
-// a coleta as velocidades medidas pelos sensores em intervalos de step_time até
-// um tempo total de timeout, retorna um vetor de omegas medidos por referencias e
-// o tamanho do vetor por retorno de funcao
-static void func_identify(const uint8_t options,
+static void func_identify(const uint8_t options,//options => motor | bypass_controller
                           const float setpoint);  // -1.0 a 1.0
-/*************************************************************************************/
-/****************************** VARIAVEIS GLOBAIS ************************************/
-/*************************************************************************************/
-static xQueueHandle bt_queue = NULL;
-static xQueueHandle encoder_queue[2] = {NULL,NULL};
-
-static bool bypass_controller = true;
-
-static float reference[2]    = {0.0, 0.0}; //-1.0 a 1.0
-static double omegaCurrent[2] = {0.0, 0.0}; //-1.0 a 1.0
-
-static struct Parameters parameters;
-
-//Identificador do Bluetooth
-static uint32_t bt_handle = 0;
-static TaskHandle_t controller_xHandle = 0;
-
-/*************************************************************************************/
 /****************************** ROTINAS PRINCIPAIS ***********************************/
-/*************************************************************************************/
-
 void app_main()
 {
-  bt_data btdata;
-  bt_queue   = xQueueCreate(1, sizeof(bt_data));
-  encoder_queue[LEFT]  = xQueueCreate(1, sizeof(struct Encoder_data));
-  encoder_queue[RIGHT] = xQueueCreate(1, sizeof(struct Encoder_data));
+  bt_data_t btdata;
+  bt_queue   = xQueueCreate(1, sizeof(bt_data_t));
+  encoder_queue[LEFT]  = xQueueCreate(1, sizeof(encoder_data_t));
+  encoder_queue[RIGHT] = xQueueCreate(1, sizeof(encoder_data_t));
 
   /** configuracoes iniciais **/
-  //interrupcoes no nucleo 0, dos encoders e do bluetooth
-  xTaskCreatePinnedToCore(_setup, "setup_BT_GPIO", 4096, NULL, 1, NULL, 0);
+  _setup();//interrupcoes no nucleo 0, dos encoders e do bluetooth
   //loop do controlador no nucleo 1
-  xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 4, &controller_xHandle, 1);
+  xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 4, NULL, 1);
 
   //controlador no nucleo 1
   uint8_t  head, cmd;
-  double    *vec_double;
+  double   *vec_double;
   while(1){
       xQueueReceive(bt_queue, &btdata, portMAX_DELAY);
       head = btdata.data[0] & 0xF0;
@@ -165,23 +90,19 @@ void app_main()
   }
 }
 //***************************************************************************************
-//this function costs about 50us
+//this function costs about ?us
 static void IRAM_ATTR isr_EncoderLeft(const void* arg)
 {
-  static struct Encoder_data my_data = {0, 0.0};
-  static double k = 2.0*M_PI/3.0;
   static int8_t lookup_table[] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
+  static encoder_data_t my_data = {0, 0.0, 0.0, 0.0};
   static uint8_t enc_v = 0;
-
-  static bool    aux = true;
-  static double  time[2] = {0.0, 0.0};
+  static double k = 2.0*M_PI/3.0;
+  static double time[2] = {0.0, 0.0};
+  static bool aux = true;
 
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
 
-  //WARNING: A logica atual se baseia em utilizar apenas as bordas de subida do canal A para calcular a velocidade
-  //mas a interrupcao como um todo faz uso de todas as bordas dos dois canais para a maxima precisao em estimar a orientacao
-  //estude uma possibilidade de melhorar a precisao utilizando mais do sensor
   if(arg)
   {
     if(aux)
@@ -196,26 +117,22 @@ static void IRAM_ATTR isr_EncoderLeft(const void* arg)
 
   xQueueSendFromISR(encoder_queue[LEFT], &my_data, NULL);
 }
-//this function costs about 50us
+//this function costs about ?us
 static void IRAM_ATTR isr_EncoderRight(const void* arg)
 {
   static int8_t  lookup_table[] = { 0,-1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
-  static uint8_t  enc_v = 0;
-  static uint32_t reg_read;
-  static struct Encoder_data my_data = {0, 0.0};
-  static double time[2] = {0.0, 0.0};
-
-  static bool   aux = true;
+  static encoder_data_t my_data = {0, 0.0, 0.0, 0.0};
+  static uint8_t enc_v = 0;
   static double k = 2.0*M_PI/3.0;
+  static double time[2] = {0.0, 0.0};
+  static bool aux = true;
+  static uint32_t reg_read;
 
   enc_v <<= 2;
   reg_read = REG_READ(GPIO_IN_REG);
   enc_v |= (reg_read & LS(GPIO_OUTA_RIGHT)) >> (GPIO_OUTA_RIGHT-1);
   enc_v |= (reg_read & LS(GPIO_OUTB_RIGHT)) >> GPIO_OUTB_RIGHT;
 
-  //WARNING: A logica atual se baseia em utilizar apenas as bordas de subida do canal A para calcular a velocidade
-  //mas a interrupcao como um todo faz uso de todas as bordas dos dois canais para a maxima precisao em estimar a orientacao
-  //estude uma possibilidade de melhorar a precisao utilizando mais do sensor
   if(arg)
   {
     if(aux)
@@ -230,11 +147,10 @@ static void IRAM_ATTR isr_EncoderRight(const void* arg)
 
   xQueueSendFromISR(encoder_queue[RIGHT], &my_data, NULL);
 }
-
 static void
 periodic_controller()
 {
-  struct Encoder_data enc_datas[2];
+  encoder_data_t enc_datas[2];
   float    pwm[2] = {0.0, 0.0};
 
   double   prevCumOmega[2]= {0.0, 0.0};
@@ -249,7 +165,6 @@ periodic_controller()
   while(1)
   {
     vTaskDelay(TIME_CONTROLLER/portTICK_PERIOD_MS);
-
     //Calculando os omegas atuais
     for(motor = 0; motor < 2; motor++)
     {
@@ -292,151 +207,6 @@ periodic_controller()
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
   }
 }
-//WARNING usar o acesso direto aos registradores para efetuar as operacoes de
-//mudanca de nivel dos gpios. Obs.: tambem eh possivel alterar o dutycicle por registradores
-static void func_controlSignal(const float pwmL,const float pwmR)
-{
-  #define SAT(x) (((x) > 1.0)?1.0:(x))
-  static bool front[2]  = {false, false};
-  front[LEFT]  = !F_IS_NEG(pwmL);
-  front[RIGHT] = !F_IS_NEG(pwmR);
-
-  REG_WRITE(GPIO_OUT_REG, (1 << GPIO_STBY) |
-                          (!front[LEFT]  << GPIO_A1N1_LEFT)  | (front[LEFT]  << GPIO_A1N2_LEFT) |
-                          (!front[RIGHT] << GPIO_B1N1_RIGHT)  | (front[RIGHT] << GPIO_B1N2_RIGHT));
-  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, SAT(ABS_F(pwmL))*100.0);  //set PWM motor esquerdo
-  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, SAT(ABS_F(pwmR))*100.0);//set PWM motor direito
-}
-//Funcao de tratamento de eventos do bluetooth
-static void
-esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
-{
-  bt_data btdata;
-    switch (event){
-    case ESP_SPP_INIT_EVT:
-        esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
-        esp_spp_start_srv(ESP_SPP_SEC_NONE, ESP_SPP_ROLE_SLAVE, 0, "ESP32_SPP_SERVER");
-        break;
-    case ESP_SPP_DISCOVERY_COMP_EVT:
-        break;
-    case ESP_SPP_OPEN_EVT:
-        bt_handle = param->open.handle;
-        break;
-    case ESP_SPP_CLOSE_EVT:
-        bt_handle = 0;
-        memset(reference, 0, 2*sizeof(float));
-        bypass_controller = true;
-        break;
-    case ESP_SPP_START_EVT:
-        // vTaskResume(controller_xHandle);
-        break;
-    case ESP_SPP_CL_INIT_EVT:
-        break;
-    case ESP_SPP_DATA_IND_EVT:
-        btdata.data = param->data_ind.data;
-        btdata.len  = param->data_ind.len;
-        xQueueSend(bt_queue, &btdata, NULL);
-        break;
-    case ESP_SPP_CONG_EVT:
-        break;
-    case ESP_SPP_WRITE_EVT:
-        break;
-    case ESP_SPP_SRV_OPEN_EVT:
-      bt_handle = param->open.handle;
-        break;
-    default:
-        break;
-    }
-}
-//Refazer
-static void func_calibration()
-{
-  memset(reference, 0, 2*sizeof(float));
-  bypass_controller = true;
-
-  #define TIME_MS_WAIT          1000
-  #define N_POINTS                50
-  #define MIN_PWM                0.1
-  #define STEP                  (1.0 - MIN_PWM)/((float)N_POINTS)
-
-  double omegaMax_tmp;
-  double minOmegaMax = 999999.9;
-
-  double v_omega[N_POINTS];
-  double v_pwm[N_POINTS];
-  double K;
-  double tau = 0.0;
-
-  for(int motor = 0; motor < 2; motor++)
-  {
-    memset(reference, 0, 2*sizeof(float));
-    for(int sense = 0; sense < 2; sense++)
-    {
-      reference[motor] = 0.0;
-      vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
-
-      for(int i = 0; i < N_POINTS; i++)
-      {
-        v_pwm[i] = (sense == 0)?MIN_PWM + STEP*i: -MIN_PWM - STEP*i;
-        reference[motor] = v_pwm[i];
-        vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
-        v_omega[i]= omegaCurrent[motor];
-      }
-
-      linearReg(v_omega, v_pwm, N_POINTS,
-                &parameters.coef[MS2i(motor, sense)].ang,
-                &parameters.coef[MS2i(motor, sense)].lin);
-
-      minOmegaMax = (ABS_F(v_omega[N_POINTS-1]) < minOmegaMax)?ABS_F(v_omega[N_POINTS-1]):minOmegaMax;
-
-      ESP_LOGI("POTI_INFO", "Motor:%d Sense:%d a:%f b:%f",
-               motor, sense, parameters.coef[MS2i(motor, sense)].ang,
-                             parameters.coef[MS2i(motor, sense)].lin);
-
-      reference[motor] = 0.0;
-      vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
-
-
-      //Para evitar contas apos a medida do omega, resolvi usar essa estrutura de codigo maior.
-      double prevTime;
-      double checkpoint = v_omega[N_POINTS - 1]*0.632; //Pela teoria, tau => ~= 63.2% do valor de regime
-      if(sense == 0)
-      {
-        reference[motor] = 1.0;
-        prevTime = esp_timer_get_time();
-        while(omegaCurrent[motor] < checkpoint)
-        {
-          tau = esp_timer_get_time();
-        }
-      }else{
-        reference[motor] = -1.0;
-        prevTime = esp_timer_get_time();
-        while(omegaCurrent[motor] > checkpoint)
-        {
-          tau = esp_timer_get_time();
-        }
-      }
-      reference[motor] = 0.0;
-
-      tau = (tau - prevTime)/1000000.0;
-      K  = 1.0/parameters.coef[MS2i(motor, sense)].ang;
-      parameters.Kp[MS2i(motor, sense)] = (Sd*tau - 1.0)/K;
-
-      ESP_LOGI("POTI_INFO", "tau:%lf K:%lf Kp:%lf", tau, K, parameters.Kp[MS2i(motor, sense)]);
-    }
-
-
-  }
-  memset(reference, 0, 2*sizeof(float));
-
-  //Maior velocidade considerada
-  parameters.omegaMax = 0.90*ABS_F(minOmegaMax);
-  esp_err_t err = save_parameters(&parameters);
-  if(err != ESP_OK) ESP_LOGE("POTI_ERRO","Falha ao salvar os parametros, erro:%s", esp_err_to_name(err));
-}
-/**WARNING:
-** Fixar o steptime e o timeout = 2s
-**/
 static void func_identify(const uint8_t options,const float setpoint)
 {
   bypass_controller  = !!(options & 0x7F);  //bypass ou nao o controlador
@@ -466,9 +236,128 @@ static void func_identify(const uint8_t options,const float setpoint)
 
   free(vec_omegas_identify);
 }
-/*************************************************************************************/
+static void func_calibration()
+{
+ memset(reference, 0, 2*sizeof(float));
+ bypass_controller = true;
+
+ #define TIME_MS_WAIT          1000
+ #define N_POINTS                50
+ #define MIN_PWM                0.1
+ #define STEP                  (1.0 - MIN_PWM)/((float)N_POINTS)
+
+ double minOmegaMax = 999999.9;
+ double v_omega[N_POINTS];
+ double v_pwm[N_POINTS];
+ double K;
+ double tau = 0.0;
+
+ for(int motor = 0; motor < 2; motor++)
+ {
+   memset(reference, 0, 2*sizeof(float));
+   for(int sense = 0; sense < 2; sense++)
+   {
+     reference[motor] = 0.0;
+     vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
+
+     for(int i = 0; i < N_POINTS; i++)
+     {
+       v_pwm[i] = (sense == 0)?MIN_PWM + STEP*i: -MIN_PWM - STEP*i;
+       reference[motor] = v_pwm[i];
+       vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
+       v_omega[i]= omegaCurrent[motor];
+     }
+
+     linearReg(v_omega, v_pwm, N_POINTS,
+               &parameters.coef[MS2i(motor, sense)].ang,
+               &parameters.coef[MS2i(motor, sense)].lin);
+
+     minOmegaMax = (ABS_F(v_omega[N_POINTS-1]) < minOmegaMax)?ABS_F(v_omega[N_POINTS-1]):minOmegaMax;
+
+     ESP_LOGI("POTI_INFO", "Motor:%d Sense:%d a:%f b:%f",
+              motor, sense, parameters.coef[MS2i(motor, sense)].ang,
+                            parameters.coef[MS2i(motor, sense)].lin);
+
+     reference[motor] = 0.0;
+     vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
+
+
+     //Para evitar contas apos a medida do omega, resolvi usar essa estrutura de codigo maior.
+     double prevTime;
+     double checkpoint = v_omega[N_POINTS - 1]*0.632; //Pela teoria, tau => ~= 63.2% do valor de regime
+     if(sense == 0)
+     {
+       reference[motor] = 1.0;
+       prevTime = esp_timer_get_time();
+       while(omegaCurrent[motor] < checkpoint)
+       {
+         tau = esp_timer_get_time();
+       }
+     }else{
+       reference[motor] = -1.0;
+       prevTime = esp_timer_get_time();
+       while(omegaCurrent[motor] > checkpoint)
+       {
+         tau = esp_timer_get_time();
+       }
+     }
+     reference[motor] = 0.0;
+
+     tau = (tau - prevTime)/1000000.0;
+     K  = 1.0/parameters.coef[MS2i(motor, sense)].ang;
+     parameters.Kp[MS2i(motor, sense)] = (Sd*tau - 1.0)/K;
+
+     ESP_LOGI("POTI_INFO", "tau:%lf K:%lf Kp:%lf", tau, K, parameters.Kp[MS2i(motor, sense)]);
+   }
+ }
+ memset(reference, 0, 2*sizeof(float));
+
+ //Maior velocidade considerada
+ parameters.omegaMax = 0.90*ABS_F(minOmegaMax);
+ esp_err_t err = save_parameters(&parameters);
+ if(err != ESP_OK) ESP_LOGE("POTI_ERRO","Falha ao salvar os parametros, erro:%s", esp_err_to_name(err));
+}
+//Funcao de tratamento de eventos do bluetooth
+static void
+esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
+{
+  bt_data_t btdata;
+    switch (event){
+    case ESP_SPP_INIT_EVT:
+        esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
+        esp_spp_start_srv(ESP_SPP_SEC_NONE, ESP_SPP_ROLE_SLAVE, 0, "ESP32_SPP_SERVER");
+        break;
+    case ESP_SPP_DISCOVERY_COMP_EVT:
+        break;
+    case ESP_SPP_OPEN_EVT:
+        bt_handle = param->open.handle;
+        break;
+    case ESP_SPP_CLOSE_EVT:
+        bt_handle = 0;
+        memset(reference, 0, 2*sizeof(float));
+        bypass_controller = true;
+        break;
+    case ESP_SPP_START_EVT:
+        break;
+    case ESP_SPP_CL_INIT_EVT:
+        break;
+    case ESP_SPP_DATA_IND_EVT:
+        btdata.data = param->data_ind.data;
+        btdata.len  = param->data_ind.len;
+        xQueueSend(bt_queue, &btdata, NULL);
+        break;
+    case ESP_SPP_CONG_EVT:
+        break;
+    case ESP_SPP_WRITE_EVT:
+        break;
+    case ESP_SPP_SRV_OPEN_EVT:
+      bt_handle = param->open.handle;
+        break;
+    default:
+        break;
+    }
+}
 /****************************** CONFIGURACOES ****************************************/
-/*************************************************************************************/
 static void _setup()
 {
   //Config. Non-volatile storage (NVS)
@@ -477,13 +366,10 @@ static void _setup()
     nvs_flash_erase();
     nvs_flash_init();
   }
+
   //Carrega os ultimos parametros salvos na memoria Flash
   esp_err_t err = load_parameters(&parameters);
-  if(err != ESP_OK)
-  {
-    ESP_LOGE("POTI_ERRO","Falha ao carregar os parametros, erro:%s", esp_err_to_name(err));
-    // if(err == ESP_ERR_NVS_NOT_FOUND)//este esp ainda nao possui dados salvos na memoria
-  }
+  if(err != ESP_OK)ESP_LOGE("POTI_ERRO","Falha ao carregar os parametros, erro:%s", esp_err_to_name(err));
 
   //Config. Bluetooth
   esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
@@ -527,12 +413,10 @@ static void _setup()
   mcpwm_set_pin(MCPWM_UNIT_0, &pin_configLeft);
 
   mcpwm_config_t pwm_config;
-  pwm_config.frequency = 1000;    //frequency = 1kHz
+  pwm_config.frequency = 10000;  //frequency = 10kHz
   pwm_config.cmpr_a = 0.0;       //duty cycle of PWMxA = 0.0%
   pwm_config.cmpr_b = 0.0;       //duty cycle of PWMxA = 0.0%
   pwm_config.counter_mode = MCPWM_UP_COUNTER;
   pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
   mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);   //Configure PWM0A & PWM0B with above settings
-
-  vTaskDelete(NULL);
 }
