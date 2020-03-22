@@ -11,14 +11,15 @@ static uint32_t bt_handle = 0;
 /********************************* CABEÇALHOS ****************************************/
 static void _setup();
 //interruptions and callbacks
-static void IRAM_ATTR isr_EncoderLeft(const void*  arg);
-static void IRAM_ATTR isr_EncoderRight(const void* arg);
+static void IRAM_ATTR isr_EncoderLeft(void *arg);
+static void IRAM_ATTR isr_EncoderRight(void *arg);
 static void esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
 static void periodic_controller();
 static void func_calibration();
 static void func_identify(const uint8_t options,//options => motor | bypass_controller
                           const float setpoint);  // -1.0 a 1.0
 /****************************** ROTINAS PRINCIPAIS ***********************************/
+
 void app_main()
 {
   bt_data_t btdata;
@@ -89,61 +90,62 @@ void app_main()
       }
   }
 }
+
 //***************************************************************************************
 //this function costs about ?us
-static void IRAM_ATTR isr_EncoderLeft(const void* arg)
+static void IRAM_ATTR isr_EncoderLeft(void *arg)
 {
-  static int8_t lookup_table[] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
+  // static int8_t lookup_table[] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
+  static int8_t lookup_table[] = {0, 1, -1, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 1, -1, 0};
   static encoder_data_t my_data = {0, 0.0, 0.0, 0.0};
   static uint8_t enc_v = 0;
   static double k = 2.0*M_PI/3.0;
-  static double time[2] = {0.0, 0.0};
-  static bool aux = true;
+  static uint32_t prevTime[2] = {0, 0};
+  static uint32_t currentTime[2] = {0, 0};
+  static double dt = 0.0;
+  static uint8_t ch = 0;
 
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
 
-  if(arg)
-  {
-    if(aux)
-    {
-      time[1] = esp_timer_get_time()/1000000.0;
-      my_data.cumOmega += (double)lookup_table[enc_v & 0b1111]*(k/(time[1] - time[0]))*(!!time[0]);//rad/s
-      time[0] = time[1];
-      my_data.nOmegas++;
-    }
-    aux = !aux;
-  }
+  ch = ((uint32_t)arg)&0b1;
+  currentTime[ch] = esp_timer_get_time();
+  dt = (currentTime[ch] - prevTime[ch])/1000000.0;
+  prevTime[ch] = currentTime[ch];
+
+  my_data.rawOmega  = k*(double)lookup_table[enc_v & 0b1111]/dt;
+  my_data.cumOmega += my_data.rawOmega;//rad/s
+  my_data.nOmegas++;
 
   xQueueSendFromISR(encoder_queue[LEFT], &my_data, NULL);
 }
 //this function costs about ?us
-static void IRAM_ATTR isr_EncoderRight(const void* arg)
+static void IRAM_ATTR isr_EncoderRight(void* arg)
 {
-  static int8_t  lookup_table[] = { 0,-1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
+  // static int8_t  lookup_table[] = { 0,-1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
+  static int8_t lookup_table[] = {0, -1, 1, 0, 0, 0, 0, -1, 0, 0, 0, 1, 0, -1, 1, 0};
   static encoder_data_t my_data = {0, 0.0, 0.0, 0.0};
   static uint8_t enc_v = 0;
   static double k = 2.0*M_PI/3.0;
-  static double time[2] = {0.0, 0.0};
-  static bool aux = true;
   static uint32_t reg_read;
+  static uint32_t prevTime[2] = {0, 0};
+  static uint32_t currentTime[2] = {0, 0};
+  static double dt = 0.0;
+  static uint8_t ch = 0;
 
   enc_v <<= 2;
   reg_read = REG_READ(GPIO_IN_REG);
   enc_v |= (reg_read & LS(GPIO_OUTA_RIGHT)) >> (GPIO_OUTA_RIGHT-1);
   enc_v |= (reg_read & LS(GPIO_OUTB_RIGHT)) >> GPIO_OUTB_RIGHT;
 
-  if(arg)
-  {
-    if(aux)
-    {
-      time[1] = esp_timer_get_time()/1000000.0;
-      my_data.cumOmega += (double)lookup_table[enc_v & 0b1111]*(k/(time[1] - time[0]))*(!!time[0]);//rad/s
-      time[0] = time[1];
-      my_data.nOmegas++;
-    }
-    aux = !aux;
-  }
+  ch = ((uint32_t)arg)&0b1;
+  currentTime[ch] = esp_timer_get_time();
+  dt = (currentTime[ch] - prevTime[ch])/1000000.0;
+  prevTime[ch] = currentTime[ch];
+
+  my_data.rawOmega  = k*(double)lookup_table[enc_v & 0b1111]/dt;
+  my_data.cumOmega += my_data.rawOmega;//rad/s
+  my_data.nOmegas++;
 
   xQueueSendFromISR(encoder_queue[RIGHT], &my_data, NULL);
 }
@@ -174,13 +176,13 @@ periodic_controller()
         if(countVelZero[motor] > TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER)
           omegaCurrent[motor] = 0;
       }else{
-
         diff = enc_datas[motor].nOmegas - prevNOmegas[motor];
         if(diff != 0)omegaCurrent[motor] = (enc_datas[motor].cumOmega - prevCumOmega[motor])/diff;
 
         prevCumOmega[motor] = enc_datas[motor].cumOmega;
         prevNOmegas[motor]  = enc_datas[motor].nOmegas;
         countVelZero[motor] = 1;
+        // omegaCurrent[motor] = enc_datas[motor].rawOmega;
       }
     }
 
@@ -227,7 +229,7 @@ static void func_identify(const uint8_t options,const float setpoint)
   memset(reference, 0, 2*sizeof(float));
 
   //envia a informacao de quantas medidas foram realizadas
-  esp_spp_write(bt_handle, sizeof(int), &size);
+  esp_spp_write(bt_handle, sizeof(int), (void*)&size);
   //enviar em blocos de 200, observei que o maximo de bytes transmitidos esta sendo de 990 bytes
   //que equivale a 247.5 floats
   //transmissao dos dados em bloco de 200
@@ -344,7 +346,7 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
     case ESP_SPP_DATA_IND_EVT:
         btdata.data = param->data_ind.data;
         btdata.len  = param->data_ind.len;
-        xQueueSend(bt_queue, &btdata, NULL);
+        xQueueSend(bt_queue, (void*)&btdata, 1);
         break;
     case ESP_SPP_CONG_EVT:
         break;
@@ -360,6 +362,9 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 /****************************** CONFIGURACOES ****************************************/
 static void _setup()
 {
+  #define ESP_INTR_FLAG_DEFAULT 0
+  #define CHANNEL_A 0
+  #define CHANNEL_B 1
   //Config. Non-volatile storage (NVS)
   esp_err_t ret = nvs_flash_init();
   if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -392,19 +397,19 @@ static void _setup()
   io_conf.pull_up_en = 0;
   gpio_config(&io_conf);
 
-  io_conf.intr_type = GPIO_INTR_ANYEDGE;
+  io_conf.intr_type = GPIO_INTR_POSEDGE;
   io_conf.mode = GPIO_MODE_INPUT;
   io_conf.pull_down_en = 0;
   io_conf.pull_up_en = 1;
   io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
   gpio_config(&io_conf);
 
-  gpio_install_isr_service(0);
-  gpio_isr_handler_add(GPIO_OUTA_LEFT, isr_EncoderLeft, 0);
-  gpio_isr_handler_add(GPIO_OUTB_LEFT, isr_EncoderLeft, 1);
+  gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+  gpio_isr_handler_add(GPIO_OUTA_LEFT, isr_EncoderLeft, (void*)CHANNEL_A);
+  gpio_isr_handler_add(GPIO_OUTB_LEFT, isr_EncoderLeft, (void*)CHANNEL_B);
 
-  gpio_isr_handler_add(GPIO_OUTA_RIGHT,isr_EncoderRight, 0);
-  gpio_isr_handler_add(GPIO_OUTB_RIGHT,isr_EncoderRight, 1);
+  gpio_isr_handler_add(GPIO_OUTA_RIGHT,isr_EncoderRight, (void*)CHANNEL_A);
+  gpio_isr_handler_add(GPIO_OUTB_RIGHT,isr_EncoderRight, (void*)CHANNEL_B);
 
   mcpwm_pin_config_t pin_configLeft = {
       .mcpwm0a_out_num = GPIO_PWM_LEFT,
