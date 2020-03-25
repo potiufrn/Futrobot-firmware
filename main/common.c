@@ -32,7 +32,26 @@ void decodeFloat(const uint8_t *data, float *fa, float *fb)
   *fb  = (ref[RIGHT]/32767.0)*(2.0*sense[RIGHT]-1.0);
 }
 
-void linearReg(double x[], double y[], uint8_t n, double *ang, double *lin)
+double _calcTau(double t[], double w[], uint32_t n, double Wss)
+{
+  double Sxx = 0.0;
+  double Sxy = 0.0;
+  double y;
+
+  for(uint32_t i = 0; i < n; i++)
+  {
+    if( (abs(w[i]) > 0.2*abs(Wss)) && (abs(w[i]) < 0.8*abs(Wss)) )
+    {
+      y = -log(1.0 - w[i]/Wss);
+      Sxy+= t[i]*y;
+      Sxx+= t[i]*t[i];
+    }
+  }
+
+  return Sxx/Sxy;
+}
+
+void linearReg(double x[], double y[], uint32_t n, double *ang, double *lin)
 {
   double Sx = 0.0, Sy = 0.0, Sxx = 0.0, Sxy = 0.0;
   double D;

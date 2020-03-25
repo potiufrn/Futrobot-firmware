@@ -95,7 +95,6 @@ void app_main()
 //this function costs about ?us
 static void IRAM_ATTR isr_EncoderLeft(void *arg)
 {
-  // static int8_t lookup_table[] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
   static int8_t lookup_table[] = {0, 1, -1, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 1, -1, 0};
   static encoder_data_t my_data = {0, 0.0, 0.0, 0.0};
   static uint8_t enc_v = 0;
@@ -122,7 +121,6 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
 //this function costs about ?us
 static void IRAM_ATTR isr_EncoderRight(void* arg)
 {
-  // static int8_t  lookup_table[] = { 0,-1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
   static int8_t lookup_table[] = {0, -1, 1, 0, 0, 0, 0, -1, 0, 0, 0, 1, 0, -1, 1, 0};
   static encoder_data_t my_data = {0, 0.0, 0.0, 0.0};
   static uint8_t enc_v = 0;
@@ -155,15 +153,15 @@ periodic_controller()
   encoder_data_t enc_datas[2];
   float    pwm[2] = {0.0, 0.0};
 
-  double   prevCumOmega[2]= {0.0, 0.0};
-  uint64_t prevNOmegas[2] = {0, 0};
+  // double   prevCumOmega[2]= {0.0, 0.0};
+  // uint64_t prevNOmegas[2] = {0, 0};
+  // double diff;
 
   double erro[2];
   double omegaRef[2];
 
   uint16_t countVelZero[2] = {1, 1}; //numero de contagem equivalente a 500ms no ciclo do controle
   uint8_t motor;
-  double diff;
   while(1)
   {
     vTaskDelay(TIME_CONTROLLER/portTICK_PERIOD_MS);
@@ -176,13 +174,12 @@ periodic_controller()
         if(countVelZero[motor] > TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER)
           omegaCurrent[motor] = 0;
       }else{
-        diff = enc_datas[motor].nOmegas - prevNOmegas[motor];
-        if(diff != 0)omegaCurrent[motor] = (enc_datas[motor].cumOmega - prevCumOmega[motor])/diff;
-
-        prevCumOmega[motor] = enc_datas[motor].cumOmega;
-        prevNOmegas[motor]  = enc_datas[motor].nOmegas;
+        // diff = enc_datas[motor].nOmegas - prevNOmegas[motor];
+        // if(diff != 0)omegaCurrent[motor] = (enc_datas[motor].cumOmega - prevCumOmega[motor])/diff;
+        // prevCumOmega[motor] = enc_datas[motor].cumOmega;
+        // prevNOmegas[motor]  = enc_datas[motor].nOmegas;
+        omegaCurrent[motor] = enc_datas[motor].rawOmega;
         countVelZero[motor] = 1;
-        // omegaCurrent[motor] = enc_datas[motor].rawOmega;
       }
     }
 
@@ -243,77 +240,97 @@ static void func_calibration()
  memset(reference, 0, 2*sizeof(float));
  bypass_controller = true;
 
+ #define N_POINTS                20
+ #define TIMEOUT                 50   //ms
+ #define STEP_TIME                5   //ms
+ #define N_IT                   (TIMEOUT/STEP_TIME)
+
  #define TIME_MS_WAIT          1000
- #define N_POINTS                50
- #define MIN_PWM                0.1
+ #define MIN_PWM               0.15
  #define STEP                  (1.0 - MIN_PWM)/((float)N_POINTS)
 
  double minOmegaMax = 999999.9;
- double v_omega[N_POINTS];
- double v_pwm[N_POINTS];
+ double *x = NULL;
+ double *y = NULL;
  double K;
  double tau = 0.0;
+ uint32_t prevTime = 0;
 
  for(int motor = 0; motor < 2; motor++)
  {
    memset(reference, 0, 2*sizeof(float));
    for(int sense = 0; sense < 2; sense++)
    {
+     /*Estimando a zona morta e o ganho do sistema*/
+     x = (double*)malloc(N_POINTS*sizeof(double));
+     y = (double*)malloc(N_POINTS*sizeof(double));
+
      reference[motor] = 0.0;
      vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
 
-     for(int i = 0; i < N_POINTS; i++)
+     for(uint32_t i = 0; i < N_POINTS; i++)
      {
-       v_pwm[i] = (sense == 0)?MIN_PWM + STEP*i: -MIN_PWM - STEP*i;
-       reference[motor] = v_pwm[i];
+       reference[motor] = (sense == 0)?MIN_PWM + STEP*i: -(MIN_PWM + STEP*i);
        vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
-       v_omega[i]= omegaCurrent[motor];
+       x[i] = omegaCurrent[motor];
+       y[i] = reference[motor];
      }
+     reference[motor] = 0.0;
+     vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
 
-     linearReg(v_omega, v_pwm, N_POINTS,
-               &parameters.coef[MS2i(motor, sense)].ang,
-               &parameters.coef[MS2i(motor, sense)].lin);
-
-     minOmegaMax = (ABS_F(v_omega[N_POINTS-1]) < minOmegaMax)?ABS_F(v_omega[N_POINTS-1]):minOmegaMax;
+     linearReg(x, y, N_POINTS,
+                     &parameters.coef[MS2i(motor, sense)].ang,
+                     &parameters.coef[MS2i(motor, sense)].lin);
+     minOmegaMax = (ABS_F(x[N_POINTS-1]) < minOmegaMax)?ABS_F(x[N_POINTS-1]):minOmegaMax;
+     K = 1.0/parameters.coef[MS2i(motor, sense)].ang;
 
      ESP_LOGI("POTI_INFO", "Motor:%d Sense:%d a:%f b:%f",
               motor, sense, parameters.coef[MS2i(motor, sense)].ang,
                             parameters.coef[MS2i(motor, sense)].lin);
+     /*Estimando a constante de tempo*/
+     free(x);
+     free(y);
+     x = (double*)malloc(N_IT*sizeof(double));
+     y = (double*)malloc(N_IT*sizeof(double));
 
+     /*Regressao*/
+     prevTime = esp_timer_get_time();
+     reference[motor] = 1.0*(!sense?1.0:-1.0);
+     for(uint32_t i = 0; i < N_IT; i++)
+     {
+       x[i] = (esp_timer_get_time() - prevTime)/1000000.0;
+       y[i] = omegaCurrent[motor];
+       vTaskDelay(STEP_TIME/portTICK_PERIOD_MS);
+     }
+     tau = _calcTau(x, y, N_IT, reference[motor]*K);
      reference[motor] = 0.0;
      vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
 
+     // double wss = 1.0*K;
+     // double tau2;
+     // reference[motor] = 1.0*(!sense?1.0:-1.0);
+     // prevTime = esp_timer_get_time();
+     // while(1)
+     // {
+     //   if(abs(omegaCurrent[motor]) >= 0.63*wss)
+     //   {
+     //     tau2 = (esp_timer_get_time() - prevTime)/1000000.0;
+     //     break;
+     //   }
+     // }
+     // reference[motor] = 0.0;
+     // vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
 
-     //Para evitar contas apos a medida do omega, resolvi usar essa estrutura de codigo maior.
-     double prevTime;
-     double checkpoint = v_omega[N_POINTS - 1]*0.632; //Pela teoria, tau => ~= 63.2% do valor de regime
-     if(sense == 0)
-     {
-       reference[motor] = 1.0;
-       prevTime = esp_timer_get_time();
-       while(omegaCurrent[motor] < checkpoint)
-       {
-         tau = esp_timer_get_time();
-       }
-     }else{
-       reference[motor] = -1.0;
-       prevTime = esp_timer_get_time();
-       while(omegaCurrent[motor] > checkpoint)
-       {
-         tau = esp_timer_get_time();
-       }
-     }
-     reference[motor] = 0.0;
-
-     tau = (tau - prevTime)/1000000.0;
-     K  = 1.0/parameters.coef[MS2i(motor, sense)].ang;
+     /*Calcula kp para o polo do sistema ficar em Sd*/
      parameters.Kp[MS2i(motor, sense)] = (Sd*tau - 1.0)/K;
+     free(x);
+     free(y);
 
-     ESP_LOGI("POTI_INFO", "tau:%lf K:%lf Kp:%lf", tau, K, parameters.Kp[MS2i(motor, sense)]);
+     ESP_LOGI("POTI_INFO", "tau_reg:%lf K:%lf Kp:%lf",
+                            tau, K, parameters.Kp[MS2i(motor, sense)]);
    }
  }
  memset(reference, 0, 2*sizeof(float));
-
  //Maior velocidade considerada
  parameters.omegaMax = 0.90*ABS_F(minOmegaMax);
  esp_err_t err = save_parameters(&parameters);

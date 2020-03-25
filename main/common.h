@@ -151,7 +151,8 @@ typedef struct
 void float2bytes(const float*f, uint8_t *bitstream, uint32_t num_float);
 void bytes2float(const uint8_t *bitstream, float*f, uint32_t num_float);
 void decodeFloat(const uint8_t *data, float *fa, float *fb);
-void linearReg(double x[], double y[], uint8_t n, double *ang, double *lin);//algoritmo de regressao linear, utilizando MMQ
+void linearReg(double x[], double y[], uint32_t n, double *ang, double *lin);//algoritmo de regressao linear, utilizando MMQ
+double _calcTau(double t[], double w[], uint32_t n, double Wss);//funcao auxiliar
 
 void func_controlSignal(const float pwmL,const float pwmR);
 
