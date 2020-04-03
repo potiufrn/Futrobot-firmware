@@ -139,16 +139,15 @@ esp_err_t erase_all()
   return err;
 }
 
- void func_controlSignal(const float pwmL,const float pwmR)
+void func_controlSignal(const float pwmL,const float pwmR)
 {
-  #define SAT(x) (((x) > 1.0)?1.0:(x))
-   bool front[2]  = {false, false};
+  bool front[2]  = {false, false};
   front[LEFT]  = !F_IS_NEG(pwmL);
   front[RIGHT] = !F_IS_NEG(pwmR);
 
   REG_WRITE(GPIO_OUT_REG, (1 << GPIO_STBY) |
-                          (!front[LEFT]  << GPIO_A1N1_LEFT)  | (front[LEFT]  << GPIO_A1N2_LEFT) |
+                          (!front[LEFT]  << GPIO_A1N1_LEFT)   | (front[LEFT]  << GPIO_A1N2_LEFT) |
                           (!front[RIGHT] << GPIO_B1N1_RIGHT)  | (front[RIGHT] << GPIO_B1N2_RIGHT));
-  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, SAT(ABS_F(pwmL))*100.0);  //set PWM motor esquerdo
-  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, SAT(ABS_F(pwmR))*100.0);//set PWM motor direito
+  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, ABS_F(pwmL)*100.0);  //set PWM motor esquerdo
+  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, ABS_F(pwmR)*100.0);  //set PWM motor direito
 }

@@ -45,7 +45,7 @@
 
 #define CMD_CALIBRATION    0x04
 #define CMD_IDENTIFY       0x05
-#define CMD_SET_KP         0x06
+// #define CMD_SET_KP         0x06
 
 #define CMD_REF            0x0A
 #define CMD_CONTROL_SIGNAL 0x0B
@@ -58,7 +58,7 @@
 /*************************************************************************************/
 #define TIME_TEST_OMEGA_ZERO  500   //ms, tempo do timer que realiza o teste de velocidade zero
 #define TIME_CONTROLLER         5   //ms, periodo de acionamento do controlador
-#define Sd                   30.0   //polo desejado, por testes empiricos o maximo que o sistema chega eh em torno de 35, 40
+#define Sd                    -16   //polo desejado
 
 /*************************************************************************************/
 /********************************** PIN MAP ******************************************/
@@ -132,18 +132,22 @@ typedef struct
 
 typedef struct
 {
-  int64_t nOmegas;   //quantidade de omegas somados
-  double  cumOmega;  //soma dos omegas
   double  rawOmega;  //ultimo omega medido, sem filtro
   double  omega;     //omega filtrado
 }encoder_data_t;
 
+typedef struct{
+  double wss;
+  double tau;
+}input_encoder_t;
 
 typedef struct
 {
-  coefLine_t coef[4];
-  double Kp[4];
   double omegaMax;
+  double Kp[4];        //ganho do controlador
+  double K[2];         //ganho do sistema, motor esquerdo e direito
+  double tau[2];       //constante de tempo, motor esquerdo e direito
+  coefLine_t coef[4];
 }parameters_t;
 /*************************************************************************************/
 /****************************** FUNCOES AUXILIARES ***********************************/
