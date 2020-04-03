@@ -432,12 +432,15 @@ static void _setup()
   gpio_isr_handler_add(GPIO_OUTA_RIGHT,isr_EncoderRight, (void*)CHANNEL_A);
   gpio_isr_handler_add(GPIO_OUTB_RIGHT,isr_EncoderRight, (void*)CHANNEL_B);
 
-  mcpwm_pin_config_t pin_configLeft = {
-      .mcpwm0a_out_num = GPIO_PWM_LEFT,
-      .mcpwm0b_out_num = GPIO_PWM_RIGHT,
-  };
-  mcpwm_set_pin(MCPWM_UNIT_0, &pin_configLeft);
+  mcpwm_capture_enable(MCPWM_UNIT_1, MCPWM_SELECT_CAP0, MCPWM_POS_EDGE, 0);  //capture signal on rising edge, pulse num = 0 i.e. 800,000,000 counts is equal to one second
+  mcpwm_capture_enable(MCPWM_UNIT_1, MCPWM_SELECT_CAP1, MCPWM_POS_EDGE, 0);  //capture signal on rising edge, pulse num = 0 i.e. 800,000,000 counts is equal to one second
 
+  // MCPWM[MCPWM_UNIT_0]->int_ena.val = (CAP0_INT_EN | CAP1_INT_EN);  //Enable interrupt on  CAP0, CAP1 and CAP2 signal
+  mcpwm_isr_register(MCPWM_UNIT_0, isr_EncoderLeft, NULL, ESP_INTR_FLAG_IRAM, NULL);  //Set ISR Handler
+  mcpwm_isr_register(MCPWM_UNIT_1, isr_EncoderRight, NULL, ESP_INTR_FLAG_IRAM, NULL);  //Set ISR Handler
+
+  //config. dos canais de PWM
+  //PWM freq. 10Khz, up_counter, duty cyclo initial 0
   mcpwm_config_t pwm_config;
   pwm_config.frequency = 10000;  //frequency = 10kHz
   pwm_config.cmpr_a = 0.0;       //duty cycle of PWMxA = 0.0%
