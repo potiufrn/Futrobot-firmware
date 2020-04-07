@@ -11,7 +11,6 @@ By: Luís Gabriel Pereira Condados - 31/10/2019
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
-// #include "esp_timer.h"
 
 #include "driver/periph_ctrl.h"
 #include "driver/ledc.h"
@@ -71,7 +70,7 @@ static void config_gpio(){
   mcpwm_gpio_init(MCPWM_UNIT_1, MCPWM0A, GPIO_PWM_RIGHT);
 
   mcpwm_config_t pwm_config;
-  pwm_config.frequency = 1000;    //frequency = 1kHz
+  pwm_config.frequency = 10000;    //frequency = 10kHz
   pwm_config.cmpr_a = 0.0;       //duty cycle of PWMxA = 0.0%
   pwm_config.counter_mode = MCPWM_UP_COUNTER;
   pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
@@ -132,7 +131,8 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 {
     switch (event){
     case ESP_SPP_INIT_EVT:
-        esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
+        /* set discoverable and connectable mode, wait to be connected */
+        esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
         esp_spp_start_srv(ESP_SPP_SEC_NONE, ESP_SPP_ROLE_SLAVE, 0, "ESP32_SPP_SERVER");
         break;
     case ESP_SPP_DISCOVERY_COMP_EVT:
