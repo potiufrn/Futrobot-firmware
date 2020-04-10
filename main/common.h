@@ -45,7 +45,6 @@
 
 #define CMD_CALIBRATION    0x04
 #define CMD_IDENTIFY       0x05
-// #define CMD_SET_KP         0x06
 
 #define CMD_REF            0x0A
 #define CMD_CONTROL_SIGNAL 0x0B

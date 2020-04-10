@@ -104,20 +104,17 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
   dt = (currentTime[ch] - prevTime[ch])/1000000.0;
   prevTime[ch] = currentTime[ch];
 
-  if(ch == 0)
-  {
-    xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0);
-    //medicao
-    my_data.rawOmega  = k*(double)lookup_table[enc_v & 0b1111]/dt;
-    //atualiza ganho do filtro
-    kalman_gain = p/(p + r);
-    //predição de omega
-    my_data.omega = my_data.omega + (input.wss - my_data.omega)*(1.0 - exp(-dt/input.tau));
-    //omega filtrado
-    my_data.omega = my_data.omega + kalman_gain*(my_data.rawOmega - my_data.omega);
-    //atualiza p
-    p = (1.0 - kalman_gain)*p;
-  }
+  xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0);
+  //medicao
+  my_data.rawOmega  = k*(double)lookup_table[enc_v & 0b1111]/dt;
+  //atualiza ganho do filtro
+  kalman_gain = p/(p + r);
+  //predição de omega
+  my_data.omega = my_data.omega + (input.wss - my_data.omega)*(1.0 - exp(-dt/input.tau));
+  //omega filtrado
+  my_data.omega = my_data.omega + kalman_gain*(my_data.rawOmega - my_data.omega);
+  //atualiza p
+  p = (1.0 - kalman_gain)*p;
 
   xQueueSendFromISR(from_encoder_queue[LEFT], &my_data, 0);
 }
@@ -189,29 +186,22 @@ periodic_controller()
       }
     }
 
-
     //Controlador
     for(motor = 0; motor < 2; motor++)
     {
-
-      if(!bypass_controller)
-      {
+      if(bypass_controller == false){
         omegaRef[motor] = reference[motor]*parameters.omegaMax;
         erro[motor]= omegaRef[motor] - omegaCurrent[motor];    // rad/s [-omegaMaximo, omegaMaximo]
-
         //Ação proporcional
         pwm[motor] = erro[motor]*parameters.Kp[MS2i(motor, F_IS_NEG(reference[motor]))];
-
         //Forward
         pwm[motor] += parameters.coef[MS2i(motor, F_IS_NEG(reference[motor]))].ang*omegaRef[motor] +
         parameters.coef[MS2i(motor, F_IS_NEG(reference[motor]))].lin*(!!reference[motor]);
-
         //saturador
         pwm[motor] = (ABS_F(pwm[motor]) > 1.0)? 1.0 - 2*F_IS_NEG(pwm[motor]):pwm[motor];
       }else{
         pwm[motor] = reference[motor];
       }
-
       datas_to_enc[motor].wss = pwm[motor]*parameters.K[motor]; //falta passar o pwm pelo saturador
       datas_to_enc[motor].tau = parameters.tau[motor];
       xQueueSend(to_encoder_queue[motor], &datas_to_enc[motor], 0);
@@ -222,31 +212,38 @@ periodic_controller()
 static void func_identify(const uint8_t options,const float setpoint)
 {
   bypass_controller  = !!(options & 0x7F);  //bypass ou nao o controlador
-  float timeout = 2.0;
+  float timeout = 2.0; // duracação da acquisição de dados
 
   int motor_identify     = ((options & 0x80) >> 7) & 0x01;
   int size = timeout/(TIME_CONTROLLER/1000.0); //captura durante 2 segundos a cada ciclo de controle vai gerar 'size' floats de dados lidos
-  double *vec_omegas_identify = (double*)malloc(size*sizeof(double));
-  memset(vec_omegas_identify, 0, size*sizeof(double));
+  encoder_data_t *vec_data_enc = malloc(size*sizeof(encoder_data_t));
+  memset(vec_data_enc, 0, size*sizeof(encoder_data_t));
 
+  ESP_LOGI("POTI_INFO", "Adquirindo pontos...");
   reference[motor_identify]  = setpoint;
-  vec_omegas_identify[0] = setpoint*parameters.omegaMax; //aqui eu uso o primeiro float do vetor para guardar a ref. em rad/s
-  for(int i = 1; i < size; i++)
+  for(int i = 0; i < size; i++)
   {
     vTaskDelay(TIME_CONTROLLER/portTICK_PERIOD_MS);  //aguarda os 2s
-    vec_omegas_identify[i] = omegaCurrent[motor_identify];
+    vec_data_enc[i] = enc_datas[motor_identify];
   }
   memset(reference, 0, 2*sizeof(float));
+  ESP_LOGI("POTI_INFO", "Transmitindo...");
 
   //envia a informacao de quantas medidas foram realizadas
   esp_spp_write(bt_handle, sizeof(int), (void*)&size);
-  //enviar em blocos de 200, observei que o maximo de bytes transmitidos esta sendo de 990 bytes
-  //que equivale a 247.5 floats
-  //transmissao dos dados em bloco de 200
-  for(int i = 0; i < size; i += 100)
-    esp_spp_write(bt_handle, (100)*sizeof(double), (uint8_t*)(vec_omegas_identify+i));
 
-  free(vec_omegas_identify);
+  //envia o omega de referencia adotado
+  double omega_ref = parameters.omegaMax*setpoint;
+  esp_spp_write(bt_handle, sizeof(double), (void*)&omega_ref);
+
+  //enviar em blocos de 200, observei que o maximo de bytes transmitidos esta sendo de 990 bytes
+  //que equivale a 123.75 doubles ou 61,875 struct encoder_data_t (contendo 2 doubles)
+  //transmissao dos dados em bloco de 60
+  for(int i = 0; i < size; i += 50)
+    esp_spp_write(bt_handle, 50*sizeof(encoder_data_t), (void*)(vec_data_enc+i));
+
+  free(vec_data_enc);
+  ESP_LOGI("POTI_INFO", "Identify finalizado.");
 }
 static void func_calibration()
 {
@@ -428,18 +425,13 @@ static void _setup()
   gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
   gpio_isr_handler_add(GPIO_OUTA_LEFT, isr_EncoderLeft, (void*)CHANNEL_A);
   gpio_isr_handler_add(GPIO_OUTB_LEFT, isr_EncoderLeft, (void*)CHANNEL_B);
-
   gpio_isr_handler_add(GPIO_OUTA_RIGHT,isr_EncoderRight, (void*)CHANNEL_A);
   gpio_isr_handler_add(GPIO_OUTB_RIGHT,isr_EncoderRight, (void*)CHANNEL_B);
 
-  mcpwm_capture_enable(MCPWM_UNIT_1, MCPWM_SELECT_CAP0, MCPWM_POS_EDGE, 0);  //capture signal on rising edge, pulse num = 0 i.e. 800,000,000 counts is equal to one second
-  mcpwm_capture_enable(MCPWM_UNIT_1, MCPWM_SELECT_CAP1, MCPWM_POS_EDGE, 0);  //capture signal on rising edge, pulse num = 0 i.e. 800,000,000 counts is equal to one second
-
-  // MCPWM[MCPWM_UNIT_0]->int_ena.val = (CAP0_INT_EN | CAP1_INT_EN);  //Enable interrupt on  CAP0, CAP1 and CAP2 signal
-  mcpwm_isr_register(MCPWM_UNIT_0, isr_EncoderLeft, NULL, ESP_INTR_FLAG_IRAM, NULL);  //Set ISR Handler
-  mcpwm_isr_register(MCPWM_UNIT_1, isr_EncoderRight, NULL, ESP_INTR_FLAG_IRAM, NULL);  //Set ISR Handler
-
-  //config. dos canais de PWM
+  //config. PWM
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, GPIO_PWM_LEFT);
+  mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, GPIO_PWM_RIGHT);
+  //config. canais de PWM
   //PWM freq. 10Khz, up_counter, duty cyclo initial 0
   mcpwm_config_t pwm_config;
   pwm_config.frequency = 10000;  //frequency = 10kHz
