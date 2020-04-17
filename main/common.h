@@ -1,3 +1,21 @@
+/*
+* Especificações do ESP32, módulo: ESP-WROOM-32
+*
+* 2 Núcleos de 32bits + 1 ULP coprocessor (coprocessador de baixo consumo de energia)
+* Freq.: até 250Mhz
+* Performance: até 600 DMIPS
+* ********* MEMÓRIA ********
+* Flash Externa: 4MB (expansivel até 16MB)
+* SRAM: 512Kbytes
+* ROM: 448Kb (boot e funções essenciais)
+* RTC slow SRAM: 8Kb (Para acesso do co-processador em modo deep-sleep.)
+* RTC fast SRAM: 8Kb (Para armazenamento de dados e uso de CPU em boot de RTC (relógio de tempo-real) do modo deep-sleep.
+*
+* GPIO: 36
+* PWM: 1/16 canais
+* ADC: 12 bits
+* Temperatura de operação: -40C, 125C
+*/
 #include <stdint.h>   //uintx_t
 #include <string.h>  //memset, memcpy
 #include <math.h>    //log, exp, PI...
@@ -133,6 +151,9 @@ typedef struct
 {
   double  rawOmega;  //ultimo omega medido, sem filtro
   double  omega;     //omega filtrado
+  double  pOmega;    //predicted omega
+  double  kGain;     //kalman gain
+  double  p;         //preditec variance, incerteza da estimativa
 }encoder_data_t;
 
 typedef struct{

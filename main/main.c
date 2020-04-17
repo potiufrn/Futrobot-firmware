@@ -1,6 +1,6 @@
 #include "common.h"
 /****************************** VARIAVEIS GLOBAIS ************************************/
-static encoder_data_t  enc_datas[2] = {{0.0, 0.0}, {0.0, 0.0}};
+static encoder_data_t  enc_datas[2] = {{0.0, 0.0, 0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 0.0, 0.0}};
 static xQueueHandle bt_queue = NULL;
 static xQueueHandle from_encoder_queue[2] = {NULL,NULL};
 static xQueueHandle to_encoder_queue[2] = {NULL,NULL};
@@ -83,40 +83,48 @@ void app_main()
 static void IRAM_ATTR isr_EncoderLeft(void *arg)
 {
   static const double r = 2000.0;
-  static double p = 2000.0;
-  static double kalman_gain = 0.0;
-  static input_encoder_t input = {0.0, 0.1}; //Wss, tau
+  static const double q = 50.0;
+  static input_encoder_t input = {0.0, 0.0}; //Wss, tau
+  static encoder_data_t my_data = {0.0, 0.0, 0.0, 0.5, 2000.0};//raw, filtered, predicted, gain, p
 
   static const double k = 2.0*M_PI/3.0;
   static const int8_t lookup_table[] = {0, 1, -1, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 1, -1, 0};
-  static encoder_data_t my_data = {0.0, 0.0};
-  static uint8_t enc_v = 0;
-  static uint32_t prevTime[2] = {0, 0};
+  static uint8_t  enc_v = 0;
+  static uint32_t prevTime[2] = {0.0, 0.0};
   static uint32_t currentTime[2] = {0, 0};
-  static double  dt = 0.0;
-  static uint8_t ch = 0;
+  static double   dt = 0.0;
+  static uint8_t  ch = 0;
 
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
 
   ch = ((uint32_t)arg)&0b1;
   currentTime[ch] = esp_timer_get_time();
+  if(prevTime[ch] == 0)
+  {
+    prevTime[ch] = currentTime[ch];
+    return;
+  }
   dt = (currentTime[ch] - prevTime[ch])/1000000.0;
-  prevTime[ch] = currentTime[ch];
 
-  xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0);
+  if(xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0) != 0)//caso tenha recebido dado
+  {
+    // if(dt > 0.5)my_data.omega = 0.0;
+  }
+
   //medicao
   my_data.rawOmega  = k*(double)lookup_table[enc_v & 0b1111]/dt;
   //atualiza ganho do filtro
-  kalman_gain = p/(p + r);
+  my_data.kGain = my_data.p/(my_data.p + r);
   //predição de omega
-  my_data.omega = my_data.omega + (input.wss - my_data.omega)*(1.0 - exp(-dt/input.tau));
+  my_data.pOmega = my_data.omega + (input.wss - my_data.omega)*(1.0 - exp(-dt/input.tau));
   //omega filtrado
-  my_data.omega = my_data.omega + kalman_gain*(my_data.rawOmega - my_data.omega);
+  my_data.omega = my_data.pOmega + my_data.kGain*(my_data.rawOmega - my_data.pOmega);
   //atualiza p
-  p = (1.0 - kalman_gain)*p;
+  my_data.p = (1.0 - my_data.kGain)*my_data.p + q;
 
   xQueueSendFromISR(from_encoder_queue[LEFT], &my_data, 0);
+  prevTime[ch] = currentTime[ch];
 }
 //this function costs about ?us
 static void IRAM_ATTR isr_EncoderRight(void* arg)
@@ -128,7 +136,7 @@ static void IRAM_ATTR isr_EncoderRight(void* arg)
 
   static const double k = 2.0*M_PI/3.0;
   static const int8_t lookup_table[] = {0, -1, 1, 0, 0, 0, 0, -1, 0, 0, 0, 1, 0, -1, 1, 0};
-  static encoder_data_t my_data = {0.0, 0.0};
+  static encoder_data_t my_data = {0.0, 0.0, 0.0, 0.0, 0.0};
   static uint8_t enc_v = 0;
   static uint32_t reg_read;
   static uint32_t prevTime[2] = {0, 0};
@@ -213,7 +221,6 @@ static void func_identify(const uint8_t options,const float setpoint)
 {
   bypass_controller  = !!(options & 0x7F);  //bypass ou nao o controlador
   float timeout = 2.0; // duracação da acquisição de dados
-
   int motor_identify     = ((options & 0x80) >> 7) & 0x01;
   int size = timeout/(TIME_CONTROLLER/1000.0); //captura durante 2 segundos a cada ciclo de controle vai gerar 'size' floats de dados lidos
   encoder_data_t *vec_data_enc = malloc(size*sizeof(encoder_data_t));
@@ -239,8 +246,10 @@ static void func_identify(const uint8_t options,const float setpoint)
   //enviar em blocos de 200, observei que o maximo de bytes transmitidos esta sendo de 990 bytes
   //que equivale a 123.75 doubles ou 61,875 struct encoder_data_t (contendo 2 doubles)
   //transmissao dos dados em bloco de 60
-  for(int i = 0; i < size; i += 50)
-    esp_spp_write(bt_handle, 50*sizeof(encoder_data_t), (void*)(vec_data_enc+i));
+  //10 struct por vez, ou seja, 800 bytes por envio
+  int step = 20;
+  for(int i = 0; i < size; i += step)
+    esp_spp_write(bt_handle, step*sizeof(encoder_data_t), (void*)(vec_data_enc+i));
 
   free(vec_data_enc);
   ESP_LOGI("POTI_INFO", "Identify finalizado.");
@@ -427,6 +436,15 @@ static void _setup()
   gpio_isr_handler_add(GPIO_OUTB_LEFT, isr_EncoderLeft, (void*)CHANNEL_B);
   gpio_isr_handler_add(GPIO_OUTA_RIGHT,isr_EncoderRight, (void*)CHANNEL_A);
   gpio_isr_handler_add(GPIO_OUTB_RIGHT,isr_EncoderRight, (void*)CHANNEL_B);
+
+  //informa os parametros do modelo usado no filtro de kalman para a estrutura de dados nas interrupcoes
+  for(int motor = 0; motor < 2; motor++)
+  {
+    input_encoder_t data;
+    data.wss = 0.0; //falta passar o pwm pelo saturador
+    data.tau = parameters.tau[motor];
+    xQueueSend(to_encoder_queue[motor], &data, 0);
+  }
 
   //config. PWM
   mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, GPIO_PWM_LEFT);
