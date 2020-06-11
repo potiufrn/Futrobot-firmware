@@ -34,7 +34,7 @@ void app_main()
 
   /** configuracoes iniciais **/
   _setup();//interrupcoes no nucleo 0, dos encoders e do bluetooth
-  //loop do controlador no nucleo 1
+  //controlador no nucleo 1
   xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 4, NULL, 1);
 
   //controlador no nucleo 1
@@ -353,7 +353,8 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
   bt_data_t btdata;
     switch (event){
     case ESP_SPP_INIT_EVT:
-        esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
+        // esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
+        esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
         esp_spp_start_srv(ESP_SPP_SEC_NONE, ESP_SPP_ROLE_SLAVE, 0, "ESP32_SPP_SERVER");
         break;
     case ESP_SPP_DISCOVERY_COMP_EVT:
