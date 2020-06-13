@@ -45,35 +45,38 @@ void app_main()
       if(head != CMD_HEAD)
         continue;
       cmd = btdata.data[0] & 0x0F;
-      switch (cmd) {
-      case CMD_REF:
-        decodeFloat(btdata.data, &reference[LEFT], &reference[RIGHT]);
-        if(bypass_controller)
-          bypass_controller = false;
-        break;
-      case CMD_CONTROL_SIGNAL:
-        bypass_controller = true;
-        decodeFloat(btdata.data, &reference[LEFT], &reference[RIGHT]);
-        func_controlSignal(reference[LEFT], reference[RIGHT]);
-        break;
-      case CMD_PING:
-        esp_spp_write(bt_handle, btdata.len, btdata.data);
-        break;
-      case CMD_IDENTIFY:
-        func_identify((uint8_t)btdata.data[1],                        //options
-                      *(float*)&btdata.data[2+0*sizeof(float)]);      //setpoint
-        break;
-      case CMD_CALIBRATION:
-        func_calibration();
-        break;
-      case CMD_REQ_OMEGA:
-        esp_spp_write(bt_handle, 2*sizeof(double), (uint8_t*)omegaCurrent);
-        break;
-      case CMD_REQ_CAL:
-        esp_spp_write(bt_handle, sizeof(parameters_t), (uint8_t*)&parameters);
-        break;
-      default:
-        break;
+
+      // Ações
+      switch (cmd)
+      {
+        case CMD_REF:
+          decodeFloat(btdata.data, &reference[LEFT], &reference[RIGHT]);
+          if(bypass_controller)
+            bypass_controller = false;
+          break;
+        case CMD_CONTROL_SIGNAL:
+          bypass_controller = true;
+          decodeFloat(btdata.data, &reference[LEFT], &reference[RIGHT]);
+          func_controlSignal(reference[LEFT], reference[RIGHT]);
+          break;
+        case CMD_PING:
+          esp_spp_write(bt_handle, btdata.len, btdata.data);
+          break;
+        case CMD_IDENTIFY:
+          func_identify((uint8_t)btdata.data[1],                        //options
+                        *(float*)&btdata.data[2+0*sizeof(float)]);      //setpoint
+          break;
+        case CMD_CALIBRATION:
+          func_calibration();
+          break;
+        case CMD_REQ_OMEGA:
+          esp_spp_write(bt_handle, 2*sizeof(double), (uint8_t*)omegaCurrent);
+          break;
+        case CMD_REQ_CAL:
+          esp_spp_write(bt_handle, sizeof(parameters_t), (uint8_t*)&parameters);
+          break;
+        default:
+          break;
       }
   }
 }
@@ -164,6 +167,8 @@ static void IRAM_ATTR isr_EncoderRight(void* arg)
   xQueueSendFromISR(from_encoder_queue[RIGHT], &my_data, 0);
   p = (1.0 - kalman_gain)*p;   //atualiza p,  conferir esse trecho, aparentemente esta fazendo com que o ganho tenda a zero
 }
+
+
 static void
 periodic_controller()
 {
@@ -374,6 +379,10 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
     case ESP_SPP_DATA_IND_EVT:
         btdata.data = param->data_ind.data;
         btdata.len  = param->data_ind.len;
+        if((btdata.len == 1) && (btdata.data[0] == (CMD_HEAD | CMD_RESET)))
+        {
+          esp_restart();
+        }
         xQueueSend(bt_queue, (void*)&btdata, 1);
         break;
     case ESP_SPP_CONG_EVT:

@@ -67,6 +67,7 @@
 #define CMD_REF            0x0A
 #define CMD_CONTROL_SIGNAL 0x0B
 
+#define CMD_RESET          0x0E
 #define CMD_PING           0x0F
 
 
