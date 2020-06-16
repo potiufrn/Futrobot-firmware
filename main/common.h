@@ -129,7 +129,6 @@
 *     1       0       2         (Motor direito  para frente)
 *     1       1       3         (Motor direito  para trás)
 */
-
 enum ROTATE_S{ FRONT, BACK};
 enum MOTOR{ LEFT, RIGHT};
 

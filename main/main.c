@@ -101,6 +101,7 @@ void app_main()
         {
           double omegas[2] = {enc_datas[LEFT].omega, enc_datas[RIGHT].omega};
           esp_spp_write(bt_handle, 2*sizeof(double), (uint8_t*)omegas);
+          ESP_LOGI("POTI_INFO", "Left Omega = %f  |  Right Omega = %f", omegas[0], omegas[1]);
           break;
         }
         case CMD_REQ_CAL:
@@ -200,7 +201,6 @@ static void
 periodic_controller()
 {
   input_encoder_t datas_to_enc[2] = {{0.0, 0.2}, {0.0, 0.2}};
-  double omegaCurrent[2] = {0.0, 0.0};
   double erro[2];
   double omegaRef[2];
   float  pwm[2] = {0.0, 0.0};
@@ -219,10 +219,9 @@ periodic_controller()
         if(countVelZero[motor] > TIME_TEST_OMEGA_ZERO/TIME_CONTROLLER)
         {
           enc_datas[motor].rawOmega = 0.0;
-          omegaCurrent[motor] = 0;
+          enc_datas[motor].omega = 0;
         }
       }else{
-        omegaCurrent[motor] = enc_datas[motor].omega;
         countVelZero[motor] = 1;
       }
     }
@@ -233,7 +232,7 @@ periodic_controller()
     {
       if(bypass_controller == false){
         omegaRef[motor] = reference[motor]*mem.omegaMax;
-        erro[motor]= omegaRef[motor] - omegaCurrent[motor];    // rad/s [-omegaMaximo, omegaMaximo]
+        erro[motor]= omegaRef[motor] - enc_datas[motor].omega;    // rad/s [-omegaMaximo, omegaMaximo]
         //Ação proporcional
         pwm[motor] = erro[motor]*mem.params[motor].Kp[SENSE(reference[motor])];
         //Forward
@@ -275,10 +274,8 @@ func_identify(const bool motor, const bool controller,
   esp_spp_write(bt_handle, sizeof(double), (void*)&mem.omegaMax);
   // send motor parameters
   esp_spp_write(bt_handle, sizeof(parameters_t), (void*)&mem.params[motor]);
-
   // send sensor datas
   send_spp_write_vector(bt_handle, (void*)out, size, sizeof(export_data_t));
-
   free(out);
   /*
   bypass_controller  = !!(options & 0x7F);  //bypass ou nao o controlador

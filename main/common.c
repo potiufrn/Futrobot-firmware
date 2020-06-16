@@ -168,12 +168,10 @@ void send_spp_write_vector(uint32_t bt_handle, uint8_t* datas, uint16_t n, size_
 
   //send size
   esp_spp_write(bt_handle, sizeof(uint16_t), (void*)&n);
-
   // envia de pacote em pacote
   for(uint32_t i = 0; i < send_pack; i ++)
     esp_spp_write(bt_handle, pack_size*data_size, (void*)(datas + i*pack_size));
     // esp_spp_write(bt_handle, pack_size*data_size, (void*)(datas + i*pack_size*data_size));
-
   // envia a unidade
   for(uint16_t i = 0; i < rest; i ++)
     esp_spp_write(bt_handle, data_size, (void*)(datas + i));
