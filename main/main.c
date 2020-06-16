@@ -1,13 +1,34 @@
 #include "common.h"
 /****************************** VARIAVEIS GLOBAIS ************************************/
-static encoder_data_t  enc_datas[2] = {{0.0, 0.0, 0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 0.0, 0.0}};
+// typedef struct
+// {
+//   double  rawOmega;  //ultimo omega medido, sem filtro
+//   double  omega;     //omega filtrado
+//   double  pOmega;    //predicted omega
+//   double  kGain;     //kalman gain
+//   double  p;         //preditec variance, incerteza da estimativa
+//   double  r;         //measure variance, incerteza da medição
+// }encoder_data_t;
+static encoder_data_t  enc_datas[2] = {{
+    .rawOmega = 0.0,
+    .omega = 0.0,
+    .pOmega = 0.0,
+    .kGain = 0.0,
+    .p = 0.0,
+    .r = 0.0},
+    {
+    .rawOmega = 0.0,
+    .omega = 0.0,
+    .pOmega = 0.0,
+    .kGain = 0.0,
+    .p = 0.0,
+    .r = 0.0}};
 static xQueueHandle bt_queue = NULL;
 static xQueueHandle from_encoder_queue[2] = {NULL,NULL};
 static xQueueHandle to_encoder_queue[2] = {NULL,NULL};
 static bool bypass_controller = true;
 static float  reference[2]    = {0.0, 0.0}; //-1.0 a 1.0
-static double omegaCurrent[2] = {0.0, 0.0}; //-1.0 a 1.0
-static parameters_t parameters;
+static memory_data_t mem;
 //Identificador do Bluetooth
 static uint32_t bt_handle = 0;
 /********************************* CABEÇALHOS ****************************************/
@@ -18,8 +39,8 @@ static void IRAM_ATTR isr_EncoderRight(void *arg);
 static void esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
 static void periodic_controller();
 static void func_calibration();
-static void func_identify(const uint8_t options,//options => motor | bypass_controller
-                          const float setpoint);  // -1.0 a 1.0
+static void func_identify(const bool motor, const bool controller,
+                          const float setpoint, const float stopTime);
 /****************************** ROTINAS PRINCIPAIS ***********************************/
 
 void app_main()
@@ -35,9 +56,11 @@ void app_main()
   /** configuracoes iniciais **/
   _setup();//interrupcoes no nucleo 0, dos encoders e do bluetooth
   //controlador no nucleo 1
-  xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 4, NULL, 1);
 
-  //controlador no nucleo 1
+  xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 4, NULL, 1);
+  // xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 5, LEFT, 1);
+  // xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 5, RIGHT, 1);
+
   uint8_t  head, cmd;
   while(1){
       xQueueReceive(bt_queue, &btdata, portMAX_DELAY);
@@ -63,17 +86,25 @@ void app_main()
           esp_spp_write(bt_handle, btdata.len, btdata.data);
           break;
         case CMD_IDENTIFY:
-          func_identify((uint8_t)btdata.data[1],                        //options
-                        *(float*)&btdata.data[2+0*sizeof(float)]);      //setpoint
+        {
+          bool motor = btdata.data[1];
+          bool controller = btdata.data[2];
+          float sp = *(float*)&btdata.data[3 + 0*sizeof(float)];
+          float st = *(float*)&btdata.data[3 + 1*sizeof(float)];
+          func_identify(motor, controller, sp, st);
           break;
+        }
         case CMD_CALIBRATION:
           func_calibration();
           break;
         case CMD_REQ_OMEGA:
-          esp_spp_write(bt_handle, 2*sizeof(double), (uint8_t*)omegaCurrent);
+        {
+          double omegas[2] = {enc_datas[LEFT].omega, enc_datas[RIGHT].omega};
+          esp_spp_write(bt_handle, 2*sizeof(double), (uint8_t*)omegas);
           break;
+        }
         case CMD_REQ_CAL:
-          esp_spp_write(bt_handle, sizeof(parameters_t), (uint8_t*)&parameters);
+          esp_spp_write(bt_handle, 2*sizeof(parameters_t), (uint8_t*)&mem.params);
           break;
         default:
           break;
@@ -85,18 +116,13 @@ void app_main()
 //this function costs about ?us
 static void IRAM_ATTR isr_EncoderLeft(void *arg)
 {
-  static const double r = 2000.0;
-  static const double q = 50.0;
-  static input_encoder_t input = {0.0, 0.0}; //Wss, tau
-  static encoder_data_t my_data = {0.0, 0.0, 0.0, 0.5, 2000.0};//raw, filtered, predicted, gain, p
-
-  static const double k = 2.0*M_PI/3.0;
   static const int8_t lookup_table[] = {0, 1, -1, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 1, -1, 0};
-  static uint8_t  enc_v = 0;
-  static uint32_t prevTime[2] = {0.0, 0.0};
-  static uint32_t currentTime[2] = {0, 0};
+  static const double k = 2.0*M_PI/3.0, q = 50.0;
+  static input_encoder_t input = {0.0, 0.0}; //Wss, tau
+  static encoder_data_t mydata = {.rawOmega = 0.0,.omega = 0.0,.pOmega = 0.0,.kGain = 0.5,.p = 2000.0,.r = 2000.0};//raw, filtered, predicted, gain, p
+  static uint8_t  enc_v = 0, ch = 0;
+  static uint32_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0};
   static double   dt = 0.0;
-  static uint8_t  ch = 0;
 
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
@@ -109,43 +135,36 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
     return;
   }
   dt = (currentTime[ch] - prevTime[ch])/1000000.0;
-
-  if(xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0) != 0)//caso tenha recebido dado
-  {
-    // if(dt > 0.5)my_data.omega = 0.0;
-  }
+  xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0);
+  // if(xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0) != 0)//caso tenha recebido dado
+  // {
+  //   // if(dt > 0.5)mydata.omega = 0.0;
+  // }
 
   //medicao
-  my_data.rawOmega  = k*(double)lookup_table[enc_v & 0b1111]/dt;
+  mydata.rawOmega  = k*(double)lookup_table[enc_v & 0b1111]/dt;
   //atualiza ganho do filtro
-  my_data.kGain = my_data.p/(my_data.p + r);
+  mydata.kGain = mydata.p/(mydata.p + mydata.r);
   //predição de omega
-  my_data.pOmega = my_data.omega + (input.wss - my_data.omega)*(1.0 - exp(-dt/input.tau));
+  mydata.pOmega = mydata.omega + (input.wss - mydata.omega)*(1.0 - exp(-dt/input.tau));
   //omega filtrado
-  my_data.omega = my_data.pOmega + my_data.kGain*(my_data.rawOmega - my_data.pOmega);
+  mydata.omega = mydata.pOmega + mydata.kGain*(mydata.rawOmega - mydata.pOmega);
   //atualiza p
-  my_data.p = (1.0 - my_data.kGain)*my_data.p + q;
+  mydata.p = (1.0 - mydata.kGain)*mydata.p + q;
 
-  xQueueSendFromISR(from_encoder_queue[LEFT], &my_data, 0);
+  xQueueSendFromISR(from_encoder_queue[LEFT], &mydata, 0);
   prevTime[ch] = currentTime[ch];
 }
 //this function costs about ?us
 static void IRAM_ATTR isr_EncoderRight(void* arg)
 {
-  static const double r = 2000.0;
-  static double p = 2000.0;
-  static double kalman_gain = 0.0;
-  static input_encoder_t input = {0.0, 0.1}; //Wss, tau
-
-  static const double k = 2.0*M_PI/3.0;
   static const int8_t lookup_table[] = {0, -1, 1, 0, 0, 0, 0, -1, 0, 0, 0, 1, 0, -1, 1, 0};
-  static encoder_data_t my_data = {0.0, 0.0, 0.0, 0.0, 0.0};
-  static uint8_t enc_v = 0;
-  static uint32_t reg_read;
-  static uint32_t prevTime[2] = {0, 0};
-  static uint32_t currentTime[2] = {0, 0};
-  static double dt = 0.0;
-  static uint8_t ch = 0;
+  static const double k = 2.0*M_PI/3.0, q = 50.0;
+  static input_encoder_t input = {0.0, 0.0}; //Wss, tau
+  static encoder_data_t mydata = {.rawOmega = 0.0,.omega = 0.0,.pOmega = 0.0,.kGain = 0.5,.p = 2000.0,.r = 2000.0};//raw, filtered, predicted, gain, p
+  static uint8_t  enc_v = 0, ch = 0;
+  static uint32_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0}, reg_read;
+  static double   dt = 0.0;
 
   enc_v <<= 2;
   reg_read = REG_READ(GPIO_IN_REG);
@@ -154,25 +173,34 @@ static void IRAM_ATTR isr_EncoderRight(void* arg)
 
   ch = ((uint32_t)arg)&0b1;
   currentTime[ch] = esp_timer_get_time();
+  if(prevTime[ch] == 0)
+  {
+    prevTime[ch] = currentTime[ch];
+    return;
+  }
   dt = (currentTime[ch] - prevTime[ch])/1000000.0;
-  prevTime[ch] = currentTime[ch];
-
   xQueueReceiveFromISR(to_encoder_queue[RIGHT], &input, 0);
 
-  my_data.rawOmega  = k*(double)lookup_table[enc_v & 0b1111]/dt;                           //medicao
-  kalman_gain = p/(p + r);                                                                 //atualiza ganho do filtro
-  my_data.omega = my_data.omega + (input.wss - my_data.omega)*(1.0 - exp(-dt/input.tau));  //predição de omega
-  my_data.omega = my_data.omega + kalman_gain*(my_data.rawOmega - my_data.omega);          //omega filtrado
+  //medicao
+  mydata.rawOmega  = k*(double)lookup_table[enc_v & 0b1111]/dt;
+  //atualiza ganho do filtro
+  mydata.kGain = mydata.p/(mydata.p + mydata.r);
+  //predição de omega
+  mydata.pOmega = mydata.omega + (input.wss - mydata.omega)*(1.0 - exp(-dt/input.tau));
+  //omega filtrado
+  mydata.omega = mydata.pOmega + mydata.kGain*(mydata.rawOmega - mydata.pOmega);
+  //atualiza p
+  mydata.p = (1.0 - mydata.kGain)*mydata.p + q;
 
-  xQueueSendFromISR(from_encoder_queue[RIGHT], &my_data, 0);
-  p = (1.0 - kalman_gain)*p;   //atualiza p,  conferir esse trecho, aparentemente esta fazendo com que o ganho tenda a zero
+  xQueueSendFromISR(from_encoder_queue[RIGHT], &mydata, 0);
+  prevTime[ch] = currentTime[ch];
 }
-
 
 static void
 periodic_controller()
 {
   input_encoder_t datas_to_enc[2] = {{0.0, 0.2}, {0.0, 0.2}};
+  double omegaCurrent[2] = {0.0, 0.0};
   double erro[2];
   double omegaRef[2];
   float  pwm[2] = {0.0, 0.0};
@@ -198,32 +226,61 @@ periodic_controller()
         countVelZero[motor] = 1;
       }
     }
-
+    #define ANG_COEF  mem.params[motor].coef[SENSE(reference[motor])].ang
+    #define DEAD_ZONE mem.params[motor].coef[SENSE(reference[motor])].lin*(!!reference[motor])
     //Controlador
     for(motor = 0; motor < 2; motor++)
     {
       if(bypass_controller == false){
-        omegaRef[motor] = reference[motor]*parameters.omegaMax;
+        omegaRef[motor] = reference[motor]*mem.omegaMax;
         erro[motor]= omegaRef[motor] - omegaCurrent[motor];    // rad/s [-omegaMaximo, omegaMaximo]
         //Ação proporcional
-        pwm[motor] = erro[motor]*parameters.Kp[MS2i(motor, F_IS_NEG(reference[motor]))];
+        pwm[motor] = erro[motor]*mem.params[motor].Kp[SENSE(reference[motor])];
         //Forward
-        pwm[motor] += parameters.coef[MS2i(motor, F_IS_NEG(reference[motor]))].ang*omegaRef[motor] +
-        parameters.coef[MS2i(motor, F_IS_NEG(reference[motor]))].lin*(!!reference[motor]);
-        //saturador
-        pwm[motor] = (ABS_F(pwm[motor]) > 1.0)? 1.0 - 2*F_IS_NEG(pwm[motor]):pwm[motor];
+        pwm[motor] += ANG_COEF * omegaRef[motor] + DEAD_ZONE;
+        //saturator
+        pwm[motor] = saturator(pwm[motor]);
       }else{
-        pwm[motor] = reference[motor];
+        pwm[motor] = saturator(reference[motor]);
       }
-      datas_to_enc[motor].wss = pwm[motor]*parameters.K[motor]; //falta passar o pwm pelo saturador
-      datas_to_enc[motor].tau = parameters.tau[motor];
+      datas_to_enc[motor].wss = pwm[motor]*mem.params[motor].K;
+      datas_to_enc[motor].tau = mem.params[motor].tau;
       xQueueSend(to_encoder_queue[motor], &datas_to_enc[motor], 0);
     }
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
   }
 }
-static void func_identify(const uint8_t options,const float setpoint)
+
+static void
+func_identify(const bool motor, const bool controller,
+              const float setpoint, const float stopTime)
 {
+  memset(reference, 0, 2*sizeof(float));
+  bypass_controller = controller;
+
+  uint16_t size = stopTime/(TIME_CONTROLLER/1000.0);
+  export_data_t *out = malloc(sizeof(export_data_t) * size);
+
+  // Coleta dados
+  reference[motor] = setpoint;
+  uint32_t startTime = esp_timer_get_time();
+  for(int i = 0; i < size; i++)
+  {
+    out[i].dt = (esp_timer_get_time() - startTime)/1000000.0;
+    out[i].encoder= enc_datas[motor];
+    vTaskDelay(TIME_CONTROLLER/portTICK_PERIOD_MS);
+  }
+  memset(reference, 0, 2*sizeof(float));
+  // send omegaMax
+  esp_spp_write(bt_handle, sizeof(double), (void*)&mem.omegaMax);
+  // send motor parameters
+  esp_spp_write(bt_handle, sizeof(parameters_t), (void*)&mem.params[motor]);
+
+  // send sensor datas
+  send_spp_write_vector(bt_handle, (void*)out, size, sizeof(export_data_t));
+
+  free(out);
+  /*
   bypass_controller  = !!(options & 0x7F);  //bypass ou nao o controlador
   float timeout = 2.0; // duracação da acquisição de dados
   int motor_identify     = ((options & 0x80) >> 7) & 0x01;
@@ -235,7 +292,7 @@ static void func_identify(const uint8_t options,const float setpoint)
   reference[motor_identify]  = setpoint;
   for(int i = 0; i < size; i++)
   {
-    vTaskDelay(TIME_CONTROLLER/portTICK_PERIOD_MS);  //aguarda os 2s
+    vTaskDelay(TIME_CONTROLLER/portTICK_PERIOD_MS);
     vec_data_enc[i] = enc_datas[motor_identify];
   }
   memset(reference, 0, 2*sizeof(float));
@@ -245,7 +302,7 @@ static void func_identify(const uint8_t options,const float setpoint)
   esp_spp_write(bt_handle, sizeof(int), (void*)&size);
 
   //envia o omega de referencia adotado
-  double omega_ref = parameters.omegaMax*setpoint;
+  double omega_ref = params.omegaMax*setpoint;
   esp_spp_write(bt_handle, sizeof(double), (void*)&omega_ref);
 
   //enviar em blocos de 200, observei que o maximo de bytes transmitidos esta sendo de 990 bytes
@@ -257,7 +314,8 @@ static void func_identify(const uint8_t options,const float setpoint)
     esp_spp_write(bt_handle, step*sizeof(encoder_data_t), (void*)(vec_data_enc+i));
 
   free(vec_data_enc);
-  ESP_LOGI("POTI_INFO", "Identify finalizado.");
+  // ESP_LOGI("POTI_INFO", "Identify finalizado.");
+  */
 }
 static void func_calibration()
 {
@@ -280,9 +338,7 @@ static void func_calibration()
  double K_tmp = 0.0;
  uint32_t prevTime = 0;
 
- memset(parameters.K, 0, 2*sizeof(double));
- memset(parameters.tau, 0, 2*sizeof(double));
-
+ memset(&mem, 0, sizeof(memory_data_t));
  for(int motor = 0; motor < 2; motor++)
  {
    memset(reference, 0, 2*sizeof(float));
@@ -306,13 +362,13 @@ static void func_calibration()
      vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
 
      linearReg(x, y, N_POINTS,
-                     &parameters.coef[MS2i(motor, sense)].ang,
-                     &parameters.coef[MS2i(motor, sense)].lin);
-     minOmegaMax = (ABS_F(x[0]) < minOmegaMax)?ABS_F(x[0]):minOmegaMax;
+                     &mem.params[motor].coef[sense].ang,
+                     &mem.params[motor].coef[sense].lin);
+     minOmegaMax = (fabs(x[0]) < minOmegaMax)?fabs(x[0]):minOmegaMax;
 
      ESP_LOGI("POTI_INFO", "Motor:%d Sense:%d a:%f b:%f",
-              motor, sense, parameters.coef[MS2i(motor, sense)].ang,
-                            parameters.coef[MS2i(motor, sense)].lin);
+              motor, sense, mem.params[motor].coef[sense].ang,
+                            mem.params[motor].coef[sense].lin);
      /*Estimando a constante de tempo*/
      free(x);
      free(y);
@@ -328,27 +384,29 @@ static void func_calibration()
        y[i] = enc_datas[motor].rawOmega;
        vTaskDelay(STEP_TIME/portTICK_PERIOD_MS);
      }
-     K_tmp      = 1.0/parameters.coef[MS2i(motor, sense)].ang;
+     K_tmp      = 1.0/mem.params[motor].coef[sense].ang;
      double wss = K_tmp*reference[motor];
      tau_tmp    = _calcTau(x, y, N_IT, wss);
      reference[motor] = 0.0;
      vTaskDelay(TIME_MS_WAIT/portTICK_PERIOD_MS);
 
      /*Calcula kp para o polo do sistema ficar em Sd*/
-     parameters.Kp[MS2i(motor, sense)] = -(Sd*tau_tmp + 1.0)/K_tmp;
+     mem.params[motor].Kp[sense] = -(Sd*tau_tmp + 1.0)/K_tmp;
      free(x);
      free(y);
 
-     ESP_LOGI("POTI_INFO", "tau_reg:%lf K:%lf Kp:%lf", tau_tmp, K_tmp, parameters.Kp[MS2i(motor, sense)]);
-     parameters.K[motor]  += K_tmp/2.0;
-     parameters.tau[motor]+= tau_tmp/2.0;
+     ESP_LOGI("POTI_INFO", "tau_reg:%lf K:%lf Kp:%lf", tau_tmp, K_tmp, mem.params[motor].Kp[sense]);
+     mem.params[motor].K  += K_tmp/2.0;
+     mem.params[motor].tau+= tau_tmp/2.0;
    }
  }
  memset(reference, 0, 2*sizeof(float));
  //Maior velocidade considerada
- parameters.omegaMax = 0.90*ABS_F(minOmegaMax);
- esp_err_t err = save_parameters(&parameters);
- if(err != ESP_OK) ESP_LOGE("POTI_ERRO","Falha ao salvar os parametros, erro:%s", esp_err_to_name(err));
+ mem.omegaMax = 0.90*fabs(minOmegaMax);
+ esp_err_t err = save_parameters(&mem);
+ if(err != ESP_OK)
+  ESP_LOGI("POTI_ERRO","Falha ao salvar os parametros, erro:%s", esp_err_to_name(err));
+  // ESP_LOGE("POTI_ERRO","Falha ao salvar os parametros, erro:%s", esp_err_to_name(err));
  ESP_LOGI("POTI_INFO","Calibracao finalizada");
 }
 //Funcao de tratamento de eventos do bluetooth
@@ -410,8 +468,10 @@ static void _setup()
   }
 
   //Carrega os ultimos parametros salvos na memoria Flash
-  esp_err_t err = load_parameters(&parameters);
-  if(err != ESP_OK)ESP_LOGE("POTI_ERRO","Falha ao carregar os parametros, erro:%s", esp_err_to_name(err));
+  esp_err_t err = load_parameters(&mem);
+  if(err != ESP_OK)
+    ESP_LOGI("POTI_ERRO","Falha ao carregar os dados da memória, erro:%s", esp_err_to_name(err));
+    // ESP_LOGE("POTI_ERRO","Falha ao carregar os dados da memória, erro:%s", esp_err_to_name(err));
 
   //Config. Bluetooth
   esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
@@ -451,8 +511,8 @@ static void _setup()
   for(int motor = 0; motor < 2; motor++)
   {
     input_encoder_t data;
-    data.wss = 0.0; //falta passar o pwm pelo saturador
-    data.tau = parameters.tau[motor];
+    data.wss = 0.0; //falta passar o pwm pelo saturator
+    data.tau = mem.params[motor].tau;
     xQueueSend(to_encoder_queue[motor], &data, 0);
   }
 

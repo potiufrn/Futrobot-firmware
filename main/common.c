@@ -32,6 +32,13 @@ void decodeFloat(const uint8_t *data, float *fa, float *fb)
   *fb  = (ref[RIGHT]/32767.0)*(2.0*sense[RIGHT]-1.0);
 }
 
+float saturator(float x)
+{
+  if(fabs(x) <= 1.0)return x;
+  if(x < 0.0)return -1.0;
+  return 1.0;
+}
+
 double _calcTau(double t[], double w[], uint32_t n, double Wss)
 {
   double Sxx = 0.0;
@@ -69,7 +76,7 @@ void linearReg(double x[], double y[], uint32_t n, double *ang, double *lin)
   *lin = (Sy*Sxx - Sx*Sxy)/D;
 }
 
-esp_err_t save_parameters(void* ptr_parameters)
+esp_err_t save_parameters(void* ptr_memory)
 {
   nvs_handle my_handle;
   esp_err_t err;
@@ -79,7 +86,7 @@ esp_err_t save_parameters(void* ptr_parameters)
   if (err != ESP_OK) return err;
 
   // Write value including previously saved blob if available
-  err = nvs_set_blob(my_handle, "param_page", ptr_parameters, sizeof(parameters_t));
+  err = nvs_set_blob(my_handle, "param_page", ptr_memory, sizeof(memory_data_t));
 
   if (err != ESP_OK) return err;
 
@@ -92,7 +99,7 @@ esp_err_t save_parameters(void* ptr_parameters)
   return err;
 }
 
-esp_err_t load_parameters(void* ptr_parameters)
+esp_err_t load_parameters(void* ptr_memory)
 {
   nvs_handle my_handle;
   esp_err_t err;
@@ -102,8 +109,8 @@ esp_err_t load_parameters(void* ptr_parameters)
   if (err != ESP_OK) return err;
 
   // Read the size of memory space required for blob
-  size_t required_size = sizeof(parameters_t);  // value will default to 0, if not set yet in NVS
-  err = nvs_get_blob(my_handle, "param_page", ptr_parameters, &required_size);
+  size_t required_size = sizeof(memory_data_t);  // value will default to 0, if not set yet in NVS
+  err = nvs_get_blob(my_handle, "param_page", ptr_memory, &required_size);
   if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;
 
   // Close
@@ -142,12 +149,33 @@ esp_err_t erase_all()
 void func_controlSignal(const float pwmL,const float pwmR)
 {
   bool front[2]  = {false, false};
-  front[LEFT]  = !F_IS_NEG(pwmL);
-  front[RIGHT] = !F_IS_NEG(pwmR);
+  front[LEFT]  = (pwmL > 0.0);
+  front[RIGHT] = (pwmR > 0.0);
 
   REG_WRITE(GPIO_OUT_REG, (1 << GPIO_STBY) |
                           (!front[LEFT]  << GPIO_A1N1_LEFT)   | (front[LEFT]  << GPIO_A1N2_LEFT) |
                           (!front[RIGHT] << GPIO_B1N1_RIGHT)  | (front[RIGHT] << GPIO_B1N2_RIGHT));
-  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, ABS_F(pwmL)*100.0);  //set PWM motor esquerdo
-  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, ABS_F(pwmR)*100.0);  //set PWM motor direito
+  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, fabs(pwmL)*100.0);  //set PWM motor esquerdo
+  mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0B, fabs(pwmR)*100.0);  //set PWM motor direito
+}
+
+void send_spp_write_vector(uint32_t bt_handle, uint8_t* datas, uint16_t n, size_t data_size)
+{
+  #define MTU 990
+  uint32_t pack_size = floor(MTU/data_size);
+  uint32_t send_pack = floor(n/pack_size);
+  uint32_t rest = n % pack_size;
+
+  //send size
+  esp_spp_write(bt_handle, sizeof(uint16_t), (void*)&n);
+
+  // envia de pacote em pacote
+  for(uint32_t i = 0; i < send_pack; i ++)
+    esp_spp_write(bt_handle, pack_size*data_size, (void*)(datas + i*pack_size));
+    // esp_spp_write(bt_handle, pack_size*data_size, (void*)(datas + i*pack_size*data_size));
+
+  // envia a unidade
+  for(uint16_t i = 0; i < rest; i ++)
+    esp_spp_write(bt_handle, data_size, (void*)(datas + i));
+    // esp_spp_write(bt_handle, data_size, (void*)(datas + i*data_size);
 }

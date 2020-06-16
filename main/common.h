@@ -110,9 +110,7 @@
 /****************************** MACROS, DATA ESTRUCT E ENUM *******************************/
 /*************************************************************************************/
 //sinal de um float, 1/True caso negativo. 0/False caso positivo
-#define F_IS_NEG(x) (*(uint32_t*)&(x) >> 31)
-#define ABS_F(x) (((x)<0.0)?-(x):(x))
-#define SATURADOR(x) ((ABS_F(x) > 1.0)?1.0:ABS_F(x))  //0.0 a 1.0
+#define SENSE(x) ( (x) < 0.0 )
 #define LS(x) (1ULL << (x))
 #define DELAY_SEC(x) vTaskDelay(((x)*1000.0)/portTICK_PERIOD_MS)
 //Padrao utilizado:
@@ -131,7 +129,6 @@
 *     1       0       2         (Motor direito  para frente)
 *     1       1       3         (Motor direito  para trás)
 */
-#define MS2i(motor, sense) ((((motor) << 1) | (sense))&0x03)  //Macro para converter motor e sense em index no vetor de coeficientes
 
 enum ROTATE_S{ FRONT, BACK};
 enum MOTOR{ LEFT, RIGHT};
@@ -155,6 +152,7 @@ typedef struct
   double  pOmega;    //predicted omega
   double  kGain;     //kalman gain
   double  p;         //preditec variance, incerteza da estimativa
+  double  r;         //measure variance, incerteza da medição
 }encoder_data_t;
 
 typedef struct{
@@ -164,12 +162,29 @@ typedef struct{
 
 typedef struct
 {
-  double omegaMax;
-  double Kp[4];        //ganho do controlador
-  double K[2];         //ganho do sistema, motor esquerdo e direito
-  double tau[2];       //constante de tempo, motor esquerdo e direito
-  coefLine_t coef[4];
+  //Parâmetros natural do Sistema
+  double K;      //Ganho do sistema
+  double tau;    //Constante de tempo do sistema
+  // Controlador Proporcional e Forward
+  double Kp[2];  //Ganho do controlador proporcional, para cada sentido
+  // Coef. Angular == 1/K
+  // Coef. Linear  == Zona morta
+  coefLine_t coef[2];// Coef. das retas Omega x PWM para cada sentido de rotação
 }parameters_t;
+
+typedef struct
+{
+  //Velocidade máxima do robô
+  double omegaMax;
+  // Parametros dos motores
+  parameters_t params[2];
+}memory_data_t;
+
+typedef struct
+{
+  double dt;    //delta t desde considerando t0 como tempo onde que foi aplicado o input
+  encoder_data_t encoder;
+}export_data_t;
 /*************************************************************************************/
 /****************************** FUNCOES AUXILIARES ***********************************/
 /*************************************************************************************/
@@ -178,12 +193,13 @@ void bytes2float(const uint8_t *bitstream, float*f, uint32_t num_float);
 void decodeFloat(const uint8_t *data, float *fa, float *fb);
 void linearReg(double x[], double y[], uint32_t n, double *ang, double *lin);//algoritmo de regressao linear, utilizando MMQ
 double _calcTau(double t[], double w[], uint32_t n, double Wss);//funcao auxiliar
-
+float saturator(float x); //limita x a ficar no intervalo [-1.0 , +1.0]
 void func_controlSignal(const float pwmL,const float pwmR);
+void send_spp_write_vector(uint32_t bt_handle, uint8_t* datas, uint16_t n, size_t data_size);
 
 #define STORAGE_NAMESPACE "storage"
 //ref.: https://docs.espressif.com/projects/esp-idf/en/stable/api-reference/storage/nvs_flash.html
-esp_err_t save_parameters(void* ptr_parameters);
-esp_err_t load_parameters(void* ptr_parameters);
+esp_err_t save_parameters(void* ptr_memory);
+esp_err_t load_parameters(void* ptr_memory);
 esp_err_t erase_parameters();
 esp_err_t erase_all(); //apaga todos os pares de chave-valor  dentro do espaco de nomes: STORAGE_NAMESPACE
