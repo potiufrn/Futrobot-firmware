@@ -39,7 +39,7 @@ static void IRAM_ATTR isr_EncoderRight(void *arg);
 static void esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
 static void periodic_controller();
 static void func_calibration();
-static void func_identify(const bool motor, const bool controller,
+static void func_identify(const uint8_t motor, const uint8_t controller,
                           const float setpoint, const float stopTime);
 /****************************** ROTINAS PRINCIPAIS ***********************************/
 
@@ -87,8 +87,8 @@ void app_main()
           break;
         case CMD_IDENTIFY:
         {
-          bool motor = btdata.data[1];
-          bool controller = btdata.data[2];
+          uint8_t motor = btdata.data[1];
+          uint8_t controller = btdata.data[2];
           float sp = *(float*)&btdata.data[3 + 0*sizeof(float)];
           float st = *(float*)&btdata.data[3 + 1*sizeof(float)];
           func_identify(motor, controller, sp, st);
@@ -120,11 +120,15 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
   static const int8_t lookup_table[] = {0, 1, -1, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 1, -1, 0};
   static const double k = 2.0*M_PI/3.0, q = 50.0;
   static input_encoder_t input = {0.0, 0.0}; //Wss, tau
-  static encoder_data_t mydata = {.rawOmega = 0.0,.omega = 0.0,.pOmega = 0.0,.kGain = 0.5,.p = 2000.0,.r = 2000.0};//raw, filtered, predicted, gain, p
   static uint8_t  enc_v = 0, ch = 0;
   static uint32_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0};
   static double   dt = 0.0;
-
+  static encoder_data_t mydata = {.rawOmega = 0.0,
+                                  .omega = 0.0,
+                                  .pOmega = 0.0,
+                                  .kGain = 0.0,
+                                  .p = 2000.0,
+                                  .r = 2000.0/4};//raw, filtered, predicted, gain, p
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
 
@@ -137,10 +141,6 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
   }
   dt = (currentTime[ch] - prevTime[ch])/1000000.0;
   xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0);
-  // if(xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0) != 0)//caso tenha recebido dado
-  // {
-  //   // if(dt > 0.5)mydata.omega = 0.0;
-  // }
 
   //medicao
   mydata.rawOmega  = k*(double)lookup_table[enc_v & 0b1111]/dt;
@@ -251,7 +251,7 @@ periodic_controller()
 }
 
 static void
-func_identify(const bool motor, const bool controller,
+func_identify(const uint8_t motor, const uint8_t controller,
               const float setpoint, const float stopTime)
 {
   memset(reference, 0, 2*sizeof(float));
@@ -270,49 +270,18 @@ func_identify(const bool motor, const bool controller,
     vTaskDelay(TIME_CONTROLLER/portTICK_PERIOD_MS);
   }
   memset(reference, 0, 2*sizeof(float));
-  // send omegaMax
-  esp_spp_write(bt_handle, sizeof(double), (void*)&mem.omegaMax);
   // send motor parameters
   esp_spp_write(bt_handle, sizeof(parameters_t), (void*)&mem.params[motor]);
+  // send omegaMax
+  esp_spp_write(bt_handle, sizeof(double), (void*)&mem.omegaMax);
+  // send size
+  esp_spp_write(bt_handle, sizeof(uint16_t), (void*)&size);
   // send sensor datas
-  send_spp_write_vector(bt_handle, (void*)out, size, sizeof(export_data_t));
-  free(out);
-  /*
-  bypass_controller  = !!(options & 0x7F);  //bypass ou nao o controlador
-  float timeout = 2.0; // duracação da acquisição de dados
-  int motor_identify     = ((options & 0x80) >> 7) & 0x01;
-  int size = timeout/(TIME_CONTROLLER/1000.0); //captura durante 2 segundos a cada ciclo de controle vai gerar 'size' floats de dados lidos
-  encoder_data_t *vec_data_enc = malloc(size*sizeof(encoder_data_t));
-  memset(vec_data_enc, 0, size*sizeof(encoder_data_t));
-
-  ESP_LOGI("POTI_INFO", "Adquirindo pontos...");
-  reference[motor_identify]  = setpoint;
-  for(int i = 0; i < size; i++)
-  {
-    vTaskDelay(TIME_CONTROLLER/portTICK_PERIOD_MS);
-    vec_data_enc[i] = enc_datas[motor_identify];
+  for(int i = 0; i < size; i++){
+    vTaskDelay(10/portTICK_PERIOD_MS);
+    esp_spp_write(bt_handle, sizeof(export_data_t), (void*)&out[i]);
   }
-  memset(reference, 0, 2*sizeof(float));
-  ESP_LOGI("POTI_INFO", "Transmitindo...");
-
-  //envia a informacao de quantas medidas foram realizadas
-  esp_spp_write(bt_handle, sizeof(int), (void*)&size);
-
-  //envia o omega de referencia adotado
-  double omega_ref = params.omegaMax*setpoint;
-  esp_spp_write(bt_handle, sizeof(double), (void*)&omega_ref);
-
-  //enviar em blocos de 200, observei que o maximo de bytes transmitidos esta sendo de 990 bytes
-  //que equivale a 123.75 doubles ou 61,875 struct encoder_data_t (contendo 2 doubles)
-  //transmissao dos dados em bloco de 60
-  //10 struct por vez, ou seja, 800 bytes por envio
-  int step = 20;
-  for(int i = 0; i < size; i += step)
-    esp_spp_write(bt_handle, step*sizeof(encoder_data_t), (void*)(vec_data_enc+i));
-
-  free(vec_data_enc);
-  // ESP_LOGI("POTI_INFO", "Identify finalizado.");
-  */
+  free(out);
 }
 static void func_calibration()
 {

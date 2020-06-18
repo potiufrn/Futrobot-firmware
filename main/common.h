@@ -194,7 +194,6 @@ void linearReg(double x[], double y[], uint32_t n, double *ang, double *lin);//a
 double _calcTau(double t[], double w[], uint32_t n, double Wss);//funcao auxiliar
 float saturator(float x); //limita x a ficar no intervalo [-1.0 , +1.0]
 void func_controlSignal(const float pwmL,const float pwmR);
-void send_spp_write_vector(uint32_t bt_handle, uint8_t* datas, uint16_t n, size_t data_size);
 
 #define STORAGE_NAMESPACE "storage"
 //ref.: https://docs.espressif.com/projects/esp-idf/en/stable/api-reference/storage/nvs_flash.html
