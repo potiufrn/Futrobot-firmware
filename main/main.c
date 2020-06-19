@@ -101,7 +101,6 @@ void app_main()
         {
           double omegas[2] = {enc_datas[LEFT].omega, enc_datas[RIGHT].omega};
           esp_spp_write(bt_handle, 2*sizeof(double), (uint8_t*)omegas);
-          ESP_LOGI("POTI_INFO", "Left Omega = %f  |  Right Omega = %f", omegas[0], omegas[1]);
           break;
         }
         case CMD_REQ_CAL:
@@ -128,7 +127,7 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
                                   .pOmega = 0.0,
                                   .kGain = 0.0,
                                   .p = 2000.0,
-                                  .r = 2000.0/4};//raw, filtered, predicted, gain, p
+                                  .r = 2000.0/5.0};//raw, filtered, predicted, gain, p
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
 
@@ -159,10 +158,15 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
 //this function costs about ?us
 static void IRAM_ATTR isr_EncoderRight(void* arg)
 {
+  static encoder_data_t mydata = {.rawOmega = 0.0,
+                                  .omega = 0.0,
+                                  .pOmega = 0.0,
+                                  .kGain = 0.0,
+                                  .p = 2000.0,
+                                  .r = 2000.0/5.0};//raw, filtered, predicted, gain, p
   static const int8_t lookup_table[] = {0, -1, 1, 0, 0, 0, 0, -1, 0, 0, 0, 1, 0, -1, 1, 0};
   static const double k = 2.0*M_PI/3.0, q = 50.0;
   static input_encoder_t input = {0.0, 0.0}; //Wss, tau
-  static encoder_data_t mydata = {.rawOmega = 0.0,.omega = 0.0,.pOmega = 0.0,.kGain = 0.5,.p = 2000.0,.r = 2000.0};//raw, filtered, predicted, gain, p
   static uint8_t  enc_v = 0, ch = 0;
   static uint32_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0}, reg_read;
   static double   dt = 0.0;
