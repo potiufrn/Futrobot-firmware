@@ -111,7 +111,6 @@ void app_main()
       }
   }
 }
-
 //***************************************************************************************
 //this function costs about ?us
 static void IRAM_ATTR isr_EncoderLeft(void *arg)
@@ -236,7 +235,8 @@ periodic_controller()
     {
       if(bypass_controller == false){
         omegaRef[motor] = reference[motor]*mem.omegaMax;
-        erro[motor]= omegaRef[motor] - enc_datas[motor].omega;    // rad/s [-omegaMaximo, omegaMaximo]
+        // erro[motor]= omegaRef[motor] - enc_datas[motor].omega;    // rad/s [-omegaMaximo, omegaMaximo]
+        erro[motor]= omegaRef[motor] - enc_datas[motor].rawOmega;    // rad/s [-omegaMaximo, omegaMaximo]
         //Ação proporcional
         pwm[motor] = erro[motor]*mem.params[motor].Kp[SENSE(reference[motor])];
         //Forward
@@ -259,12 +259,13 @@ func_identify(const uint8_t motor, const uint8_t controller,
               const float setpoint, const float stopTime)
 {
   memset(reference, 0, 2*sizeof(float));
-  bypass_controller = controller;
+  bypass_controller = !controller;
 
   uint16_t size = stopTime/(TIME_CONTROLLER/1000.0);
   export_data_t *out = malloc(sizeof(export_data_t) * size);
 
   // Coleta dados
+  // reference[!motor] = setpoint;
   reference[motor] = setpoint;
   uint32_t startTime = esp_timer_get_time();
   for(int i = 0; i < size; i++)
