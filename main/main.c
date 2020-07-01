@@ -80,8 +80,10 @@ static xQueueHandle encoder_queue[2] = {NULL,NULL};
 
 static bool bypass_controller = true;
 
+
 static float reference[2]    = {0.0, 0.0}; //-1.0 a 1.0
 static double omegaCurrent[2] = {0.0, 0.0}; //-1.0 a 1.0
+
 
 static struct Parameters parameters;
 
@@ -314,7 +316,8 @@ esp_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
   bt_data btdata;
     switch (event){
     case ESP_SPP_INIT_EVT:
-        esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
+        /* set discoverable and connectable mode, wait to be connected */
+        esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
         esp_spp_start_srv(ESP_SPP_SEC_NONE, ESP_SPP_ROLE_SLAVE, 0, "ESP32_SPP_SERVER");
         break;
     case ESP_SPP_DISCOVERY_COMP_EVT:
@@ -527,7 +530,7 @@ static void _setup()
   mcpwm_set_pin(MCPWM_UNIT_0, &pin_configLeft);
 
   mcpwm_config_t pwm_config;
-  pwm_config.frequency = 1000;    //frequency = 1kHz
+  pwm_config.frequency = 10000;    //frequency = 10kHz
   pwm_config.cmpr_a = 0.0;       //duty cycle of PWMxA = 0.0%
   pwm_config.cmpr_b = 0.0;       //duty cycle of PWMxA = 0.0%
   pwm_config.counter_mode = MCPWM_UP_COUNTER;
