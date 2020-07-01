@@ -1,3 +1,4 @@
+
 #include "common.h"
 /****************************** VARIAVEIS GLOBAIS ************************************/
 // typedef struct
@@ -29,6 +30,7 @@ static xQueueHandle to_encoder_queue[2] = {NULL,NULL};
 static bool bypass_controller = true;
 static float  reference[2]    = {0.0, 0.0}; //-1.0 a 1.0
 static memory_data_t mem;
+
 //Identificador do Bluetooth
 static uint32_t bt_handle = 0;
 /********************************* CABEÇALHOS ****************************************/
@@ -50,12 +52,14 @@ void app_main()
   from_encoder_queue[LEFT]  = xQueueCreate(1, sizeof(encoder_data_t));
   from_encoder_queue[RIGHT] = xQueueCreate(1, sizeof(encoder_data_t));
 
+
   to_encoder_queue[LEFT]  = xQueueCreate(1, sizeof(input_encoder_t));
   to_encoder_queue[RIGHT] = xQueueCreate(1, sizeof(input_encoder_t));
 
   /** configuracoes iniciais **/
   _setup();//interrupcoes no nucleo 0, dos encoders e do bluetooth
   //controlador no nucleo 1
+
 
   xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 4, NULL, 1);
   // xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 5, LEFT, 1);
