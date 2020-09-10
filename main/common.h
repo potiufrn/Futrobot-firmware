@@ -46,7 +46,7 @@
 #include "nvs.h"
 
 //Debug, information
-#include "esp_log.h" //ESP_LOGx
+#include "esp_log.h" //ESP_LOGx (ESP_LOGI, ESP_LOGE, ESP_LOGW)
 
 #define DEVICE_NAME "ESP_ROBO_TEST"
 // #define DEVICE_NAME "ESP_ROBO_1"
