@@ -268,7 +268,6 @@ func_identify(const uint8_t motor, const uint8_t controller,
   export_data_t *out = malloc(sizeof(export_data_t) * size);
 
   // Coleta dados
-  // reference[!motor] = setpoint;
   reference[motor] = setpoint;
   uint32_t startTime = esp_timer_get_time();
   for(int i = 0; i < size; i++)
