@@ -7,10 +7,17 @@
                 "${workspaceFolder}/main/**",
                 "${HOME}/esp/esp-idf/components/**"
             ],
+            "browse": {
+                "path": [
+                    "${HOME}/esp/esp-idf/components",
+                    "${workspaceFolder}"
+                ],
+                "limitSymbolsToIncludedHeaders": false
+            },
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
-            "cStandard": "gnu18",
-            "cppStandard": "gnu++14",
+            "cStandard": "c11",
+            "cppStandard": "gnu++20",
             "intelliSenseMode": "gcc-x64"
         }
     ],
