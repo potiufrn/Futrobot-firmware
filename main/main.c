@@ -125,7 +125,7 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
                                   .omega = 0.0,
                                   .pOmega = 0.0,
                                   .kGain = 0.0,
-                                  .p = 0.0,
+                                  .p = 60.0,
                                   .r = 1200.0}; //raw, filtered, predicted, gain, p
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
@@ -139,6 +139,12 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
   }
   dt = (currentTime[ch] - prevTime[ch]) / 1000000.0;
   xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0);
+  
+  if(dt >= 1.0){
+    xQueueSendFromISR(from_encoder_queue[LEFT], &mydata, 0);
+    prevTime[ch] = currentTime[ch];
+    return;
+  }
 
   //medição
   mydata.rawOmega = k * (double)lookup_table[enc_v & 0b1111] / dt;
@@ -162,7 +168,7 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
                                   .omega = 0.0,
                                   .pOmega = 0.0,
                                   .kGain = 0.0,
-                                  .p = 0.0,
+                                  .p = 60.0,
                                   .r = 1200.0}; //raw, filtered, predicted, gain, p
   static const int8_t lookup_table[] = {0, -1, 1, 0, 0, 0, 0, -1, 0, 0, 0, 1, 0, -1, 1, 0};
   static const double k = 2.0 * M_PI / 3.0, q = 0.0;
@@ -185,6 +191,12 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
   }
   dt = (currentTime[ch] - prevTime[ch]) / 1000000.0;
   xQueueReceiveFromISR(to_encoder_queue[RIGHT], &input, 0);
+
+  if(dt >= 1.0){
+    xQueueSendFromISR(from_encoder_queue[RIGHT], &mydata, 0);
+    prevTime[ch] = currentTime[ch];  
+    return;
+  }
 
   //medição
   mydata.rawOmega = k * (double)lookup_table[enc_v & 0b1111] / dt;
@@ -248,11 +260,13 @@ periodic_controller()
         pwm[motor] += ANG_COEF * omegaRef[motor] + DEAD_ZONE;
         //saturator
         pwm[motor] = saturator(pwm[motor]);
+
       }
       else
       {
         pwm[motor] = saturator(reference[motor]);
       }
+      
       datas_to_enc[motor].wss = pwm[motor] * (1.0 - fabs(DEAD_ZONE))/ANG_COEF;
       datas_to_enc[motor].tau = mem.params[motor].tau;
       xQueueSend(to_encoder_queue[motor], &datas_to_enc[motor], 0);
