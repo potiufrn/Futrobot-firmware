@@ -99,7 +99,7 @@ void app_main()
       break;
     case CMD_REQ_OMEGA:
     {
-      double omegas[2] = {enc_datas[LEFT].omega, enc_datas[RIGHT].omega};
+      double omegas[2] = {enc_datas[LEFT].rawOmega, enc_datas[RIGHT].rawOmega};
       esp_spp_write(bt_handle, 2 * sizeof(double), (uint8_t *)omegas);
       break;
     }
@@ -227,7 +227,7 @@ periodic_controller()
   while (1)
   {
     vTaskDelay(TIME_CONTROLLER / portTICK_PERIOD_MS);
-    //Calculando os omegas atuais
+    //Obtendo os omegas atuais
     for (motor = 0; motor < 2; motor++)
     {
       if (xQueueReceive(from_encoder_queue[motor], &enc_datas[motor], 0) == 0) //buffer vazio
@@ -236,7 +236,7 @@ periodic_controller()
         if (countVelZero[motor] > TIME_TEST_OMEGA_ZERO / TIME_CONTROLLER)
         {
           enc_datas[motor].rawOmega = 0.0;
-          enc_datas[motor].omega = 0;
+          enc_datas[motor].omega = 0.0;
         }
       }
       else
@@ -266,8 +266,8 @@ periodic_controller()
       {
         pwm[motor] = saturator(reference[motor]);
       }
-      
-      datas_to_enc[motor].wss = pwm[motor] * (1.0 - fabs(DEAD_ZONE))/ANG_COEF;
+      // datas_to_enc[motor].wss = pwm[motor] * (1.0 - fabs(DEAD_ZONE))/ANG_COEF;
+      datas_to_enc[motor].wss = pwm[motor] * mem.params[motor].K;
       datas_to_enc[motor].tau = mem.params[motor].tau;
       xQueueSend(to_encoder_queue[motor], &datas_to_enc[motor], 0);
     }
@@ -279,6 +279,8 @@ static void
 func_identify(const uint8_t motor, const uint8_t controller,
               const float setpoint, const float stopTime)
 {
+  ESP_LOGI("Identify", "Iniciada...");
+
   memset(reference, 0, 2 * sizeof(float));
   bypass_controller = !controller;
 
@@ -308,6 +310,9 @@ func_identify(const uint8_t motor, const uint8_t controller,
     esp_spp_write(bt_handle, sizeof(export_data_t), (void *)&out[i]);
   }
   free(out);
+
+  ESP_LOGI("Identify", "motor = %d | setpoint = %f", motor, setpoint);
+  ESP_LOGI("Identify", "Finalizada");
 }
 static void func_calibration()
 {
@@ -387,6 +392,11 @@ static void func_calibration()
         y[i] = enc_datas[motor].rawOmega;
         vTaskDelay(STEP_TIME / portTICK_PERIOD_MS);
       }
+      for (uint32_t i = 0; i < N_IT; i++)
+      {
+        ESP_LOGI("", "[%.5lf, %.5lf]", x[i], y[i]);
+      }
+
       double b = fabs(mem.params[motor].coef[sense].lin);
       K_tmp = (1.0 - b)/mem.params[motor].coef[sense].ang;
       double wss = K_tmp*reference[motor];
@@ -395,7 +405,8 @@ static void func_calibration()
       vTaskDelay(TIME_MS_WAIT / portTICK_PERIOD_MS);
 
       /*Calcula kp para o polo do sistema ficar em Sd*/
-      mem.params[motor].Kp[sense] = -(Sd * tau_tmp + 1.0) / K_tmp;
+      mem.params[motor].Kp[sense] = fabs(-(Sd * tau_tmp + 1.0) / K_tmp);
+      ESP_LOGI("CALIBRATION", "K_tmp = %lf | Sd = %lf | tau_tmp = %lf", K_tmp, Sd, tau_tmp);
       free(x);
       free(y);
 

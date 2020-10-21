@@ -49,7 +49,7 @@ double _calcTau(double t[], double w[], uint32_t n, double Wss)
   {
     if( (abs(w[i]) > 0.2*abs(Wss)) && (abs(w[i]) < 0.8*abs(Wss)) )
     {
-      y = -log(1.0 - w[i]/Wss);
+      y = -log(1.0 - w[i]/Wss + 0.001);
       Sxy+= t[i]*y;
       Sxx+= t[i]*t[i];
     }
