@@ -139,8 +139,9 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
   }
   dt = (currentTime[ch] - prevTime[ch]) / 1000000.0;
   xQueueReceiveFromISR(to_encoder_queue[LEFT], &input, 0);
-  
-  if(dt >= 1.0){
+
+  if (dt >= 1.0)
+  {
     xQueueSendFromISR(from_encoder_queue[LEFT], &mydata, 0);
     prevTime[ch] = currentTime[ch];
     return;
@@ -192,9 +193,10 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
   dt = (currentTime[ch] - prevTime[ch]) / 1000000.0;
   xQueueReceiveFromISR(to_encoder_queue[RIGHT], &input, 0);
 
-  if(dt >= 1.0){
+  if (dt >= 1.0)
+  {
     xQueueSendFromISR(from_encoder_queue[RIGHT], &mydata, 0);
-    prevTime[ch] = currentTime[ch];  
+    prevTime[ch] = currentTime[ch];
     return;
   }
 
@@ -260,7 +262,6 @@ periodic_controller()
         pwm[motor] += ANG_COEF * omegaRef[motor] + DEAD_ZONE;
         //saturator
         pwm[motor] = saturator(pwm[motor]);
-
       }
       else
       {
@@ -284,7 +285,7 @@ func_identify(const uint8_t motor, const uint8_t controller,
   memset(reference, 0, 2 * sizeof(float));
   bypass_controller = !controller;
 
-  uint16_t size = stopTime / (TIME_CONTROLLER / 1000.0);
+  uint16_t size = stopTime / ((TIME_CONTROLLER/2.0) / 1000.0);
   export_data_t *out = malloc(sizeof(export_data_t) * size);
 
   // Coleta dados
@@ -294,7 +295,7 @@ func_identify(const uint8_t motor, const uint8_t controller,
   {
     out[i].dt = (esp_timer_get_time() - startTime) / 1000000.0;
     out[i].encoder = enc_datas[motor];
-    vTaskDelay(TIME_CONTROLLER / portTICK_PERIOD_MS);
+    vTaskDelay((TIME_CONTROLLER/2.0) / portTICK_PERIOD_MS);
   }
   memset(reference, 0, 2 * sizeof(float));
   // send motor parameters
@@ -306,7 +307,7 @@ func_identify(const uint8_t motor, const uint8_t controller,
   // send sensor datas
   for (int i = 0; i < size; i++)
   {
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+    vTaskDelay(20 / portTICK_PERIOD_MS);
     esp_spp_write(bt_handle, sizeof(export_data_t), (void *)&out[i]);
   }
   free(out);
@@ -316,7 +317,9 @@ func_identify(const uint8_t motor, const uint8_t controller,
 }
 static void func_calibration()
 {
+  //para os motores
   memset(reference, 0, 2 * sizeof(float));
+  //desabilita o controle, reference passa a ser sinal de controle e não mais uma ref. para os controladores
   bypass_controller = true;
 
 #define N_POINTS 20                //numero de pontos para regressao que estimara o ganho do sistema e os parametros do forward
@@ -341,13 +344,18 @@ static void func_calibration()
     memset(reference, 0, 2 * sizeof(float));
     for (int sense = 0; sense < 2; sense++)
     {
-      /*Estimando a zona morta e o ganho do sistema*/
+      /***********************************************/
+      /**Estimando a zona morta e o ganho do sistema**/
+      /***********************************************/
       x = (double *)malloc(N_POINTS * sizeof(double));
       y = (double *)malloc(N_POINTS * sizeof(double));
 
+      //Parar motores
       reference[motor] = 0.0;
       vTaskDelay(TIME_MS_WAIT / portTICK_PERIOD_MS);
 
+      //Coletando pontos. (x,y) <=> (w,u).
+      // u: sinal de controle, w: velocidade do motor [rad/s]
       for (uint32_t i = 0; i < N_POINTS; i++)
       {
         reference[motor] = (sense == 0) ? 1.0 - STEP * i : -(1.0 - STEP * i);
@@ -355,19 +363,21 @@ static void func_calibration()
         x[i] = enc_datas[motor].rawOmega;
         y[i] = reference[motor];
       }
-
-      /*Debug*/
-      // ESP_LOGI("POTI_INFO", "Motor:%d Sense:%d",
-      //          motor, sense);
-      // for (uint32_t i = 0; i < N_POINTS; i++)
-      // {
-      //   ESP_LOGI("PONTOS", "%.5lf , %.5lf", x[i], y[i]);
-      // }
-      /*Debug*/
-
+      //Parar os motores
       reference[motor] = 0.0;
       vTaskDelay(TIME_MS_WAIT / portTICK_PERIOD_MS);
 
+      /*Debug*/
+      ESP_LOGI("POTI_INFO", "Motor:%d Sense:%d",
+               motor, sense);
+      for (uint32_t i = 0; i < N_POINTS; i++)
+      {
+        ESP_LOGI("PONTOS", "%.5lf , %.5lf", x[i], y[i]);
+      }
+      /*Debug*/
+
+      //Regressão linear por MMQ, coef. angular relaciona sinal de controle x velocidade
+      //Coef. Linear corresponde aprox. a zona morta, sinal minimo para velocidade diferente de zero
       linearReg(x, y, N_POINTS,
                 &mem.params[motor].coef[sense].ang,
                 &mem.params[motor].coef[sense].lin);
@@ -377,13 +387,15 @@ static void func_calibration()
       ESP_LOGI("POTI_INFO", "Motor:%d Sense:%d a:%f b:%f",
                motor, sense, mem.params[motor].coef[sense].ang,
                mem.params[motor].coef[sense].lin);
-      /*Estimando a constante de tempo*/
+      
+      /***********************************************/
+      /*********Obtendo Constante de tempo************/
+      /***********************************************/
       free(x);
       free(y);
       x = (double *)malloc(N_IT * sizeof(double));
       y = (double *)malloc(N_IT * sizeof(double));
-
-      /*Regressao*/
+      //pontos (x,y) <=> (t,w)
       prevTime = esp_timer_get_time();
       reference[motor] = (sense == 0 ? 1.0 : -1.0);
       for (uint32_t i = 0; i < N_IT; i++)
@@ -392,19 +404,23 @@ static void func_calibration()
         y[i] = enc_datas[motor].rawOmega;
         vTaskDelay(STEP_TIME / portTICK_PERIOD_MS);
       }
+
+      //DEBUG: Imprimi os pontos obtidos
       for (uint32_t i = 0; i < N_IT; i++)
       {
         ESP_LOGI("", "[%.5lf, %.5lf]", x[i], y[i]);
       }
 
       double b = fabs(mem.params[motor].coef[sense].lin);
-      K_tmp = (1.0 - b)/mem.params[motor].coef[sense].ang;
-      double wss = K_tmp*reference[motor];
+      K_tmp = (1.0 - b) / mem.params[motor].coef[sense].ang;
+      double wss = K_tmp * reference[motor];
       tau_tmp = _calcTau(x, y, N_IT, wss);
       reference[motor] = 0.0;
       vTaskDelay(TIME_MS_WAIT / portTICK_PERIOD_MS);
 
+      /***********************************************/
       /*Calcula kp para o polo do sistema ficar em Sd*/
+      /***********************************************/
       mem.params[motor].Kp[sense] = fabs(-(Sd * tau_tmp + 1.0) / K_tmp);
       ESP_LOGI("CALIBRATION", "K_tmp = %lf | Sd = %lf | tau_tmp = %lf", K_tmp, Sd, tau_tmp);
       free(x);
