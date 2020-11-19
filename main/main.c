@@ -126,7 +126,9 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
                                   .pOmega = 0.0,
                                   .kGain = 0.0,
                                   .p = 60.0,
-                                  .r = 1200.0}; //raw, filtered, predicted, gain, p
+                                  .r = 1200.0,
+                                  .exec_time = 99999.0}; //raw, filtered, predicted, gain, p
+  mydata.exec_time = esp_timer_get_time();                                  
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
 
@@ -159,10 +161,15 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
   mydata.omega = mydata.pOmega + mydata.kGain * (mydata.rawOmega - mydata.pOmega);
   mydata.p = (1.0 - mydata.kGain) * mydata.p;
 
+  mydata.exec_time = esp_timer_get_time() - mydata.exec_time;
+
   xQueueSendFromISR(from_encoder_queue[LEFT], &mydata, 0);
   prevTime[ch] = currentTime[ch];
 }
-//this function costs about ?us
+//this function costs approx.:
+// 240Mhz ~= 26us
+// 160Mhz ~= 38.5us
+// 80Mhz  ~= 77us
 static void IRAM_ATTR isr_EncoderRight(void *arg)
 {
   static encoder_data_t mydata = {.rawOmega = 0.0,
@@ -170,7 +177,8 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
                                   .pOmega = 0.0,
                                   .kGain = 0.0,
                                   .p = 60.0,
-                                  .r = 1200.0}; //raw, filtered, predicted, gain, p
+                                  .r = 1200.0,
+                                  .exec_time = 9999.0}; //raw, filtered, predicted, gain, p
   static const int8_t lookup_table[] = {0, -1, 1, 0, 0, 0, 0, -1, 0, 0, 0, 1, 0, -1, 1, 0};
   static const double k = 2.0 * M_PI / 3.0, q = 0.0;
   static input_encoder_t input = {0.0, 99999.0}; //Wss, tau
@@ -178,6 +186,7 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
   static uint32_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0}, reg_read;
   static double dt = 0.0;
 
+  mydata.exec_time = esp_timer_get_time();
   enc_v <<= 2;
   reg_read = REG_READ(GPIO_IN_REG);
   enc_v |= (reg_read & LS(GPIO_OUTA_RIGHT)) >> (GPIO_OUTA_RIGHT - 1);
@@ -212,10 +221,14 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
   mydata.omega = mydata.pOmega + mydata.kGain * (mydata.rawOmega - mydata.pOmega);
   mydata.p = (1.0 - mydata.kGain) * mydata.p;
 
+
+  mydata.exec_time = esp_timer_get_time() - mydata.exec_time;
+
   xQueueSendFromISR(from_encoder_queue[RIGHT], &mydata, 0);
   prevTime[ch] = currentTime[ch];
 }
 
+// A rotina esta gastando no pior caso 0.4ms, fora o delay que controla o tempo de amostragem
 static void
 periodic_controller()
 {
@@ -226,9 +239,13 @@ periodic_controller()
   uint16_t countVelZero[2] = {1, 1}; //numero de contagem equivalente a 500ms no ciclo do controle
   uint8_t motor;
 
+  double k = 2.0 * M_PI / 3.0;
+  double exec_time = 0.0;
   while (1)
   {
     vTaskDelay(TIME_CONTROLLER / portTICK_PERIOD_MS);
+
+    exec_time = esp_timer_get_time();
     //Obtendo os omegas atuais
     for (motor = 0; motor < 2; motor++)
     {
@@ -244,6 +261,12 @@ periodic_controller()
       else
       {
         countVelZero[motor] = 1;
+        /*
+          if(motor == LEFT)
+            ESP_LOGI("ISR_ESQUERDO", "freq. de execução = %.6e [Hz]| freq. de acionamento = %.6e [Hz]", 1.0/(enc_datas[motor].exec_time/1000000.0), 1.0/(k/enc_datas[motor].rawOmega));
+          else
+            ESP_LOGI("ISR_DIREITO",  "freq. de execução = %.6e [Hz]| freq. de acionamento = %.6e [Hz]", 1.0/(enc_datas[motor].exec_time/1000000.0), 1.0/(k/enc_datas[motor].rawOmega));
+        */
       }
     }
 #define ANG_COEF mem.params[motor].coef[SENSE(reference[motor])].ang
@@ -273,6 +296,9 @@ periodic_controller()
       xQueueSend(to_encoder_queue[motor], &datas_to_enc[motor], 0);
     }
     func_controlSignal(pwm[LEFT], pwm[RIGHT]);
+
+    exec_time = esp_timer_get_time() - exec_time;
+    // ESP_LOGI("CONTROLLER", "Tempo de execução da rotina de controle = %.6e [s]\n", exec_time/100000.0);
   }
 }
 

@@ -152,7 +152,8 @@ typedef struct
   double  kGain;     //kalman gain
   double  p;         //preditec variance, incerteza da estimativa
   double  r;         //measure variance, incerteza da medição
-  // double  exec_time; //tempo gasto na ultima execução
+  
+  double  exec_time; //tempo gasto na ultima execução
 }encoder_data_t;
 
 typedef struct{
