@@ -116,7 +116,7 @@ void app_main()
 static void IRAM_ATTR isr_EncoderLeft(void *arg)
 {
   static const int8_t lookup_table[] = {0, 1, -1, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 1, -1, 0};
-  static const double k = 2.0 * M_PI / 3.0, q = 0.0;
+  static const double k = 2.0 * M_PI / 3.0, q = 10.0;
   static input_encoder_t input = {0.0, 99999.0}; //Wss, tau
   static uint8_t enc_v = 0, ch = 0;
   static uint32_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0};
@@ -172,7 +172,7 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
                                   .p = 60.0,
                                   .r = 1200.0}; //raw, filtered, predicted, gain, p
   static const int8_t lookup_table[] = {0, -1, 1, 0, 0, 0, 0, -1, 0, 0, 0, 1, 0, -1, 1, 0};
-  static const double k = 2.0 * M_PI / 3.0, q = 0.0;
+  static const double k = 2.0 * M_PI / 3.0, q = 10.0;
   static input_encoder_t input = {0.0, 99999.0}; //Wss, tau
   static uint8_t enc_v = 0, ch = 0;
   static uint32_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0}, reg_read;
@@ -254,8 +254,8 @@ periodic_controller()
       if (bypass_controller == false)
       {
         omegaRef[motor] = reference[motor] * mem.omegaMax;
-        // erro[motor]= omegaRef[motor] - enc_datas[motor].omega;    // rad/s [-omegaMaximo, omegaMaximo]
-        erro[motor] = omegaRef[motor] - enc_datas[motor].rawOmega; // rad/s [-omegaMaximo, omegaMaximo]
+        erro[motor] = omegaRef[motor] - enc_datas[motor].omega;    // rad/s [-omegaMaximo, omegaMaximo]
+        // erro[motor] = omegaRef[motor] - enc_datas[motor].rawOmega; // rad/s [-omegaMaximo, omegaMaximo]
         //Ação proporcional
         pwm[motor] = erro[motor] * mem.params[motor].Kp[SENSE(reference[motor])];
         //Forward
@@ -304,10 +304,11 @@ func_identify(const uint8_t motor, const uint8_t controller,
   esp_spp_write(bt_handle, sizeof(double), (void *)&mem.omegaMax);
   // send size
   esp_spp_write(bt_handle, sizeof(uint16_t), (void *)&size);
+  
   // send sensor datas
   for (int i = 0; i < size; i++)
   {
-    vTaskDelay(20 / portTICK_PERIOD_MS);
+    vTaskDelay(50 / portTICK_PERIOD_MS);
     esp_spp_write(bt_handle, sizeof(export_data_t), (void *)&out[i]);
   }
   free(out);

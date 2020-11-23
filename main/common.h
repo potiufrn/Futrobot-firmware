@@ -76,7 +76,7 @@
 /*************************************************************************************/
 #define TIME_TEST_OMEGA_ZERO  500   //ms, tempo do timer que realiza o teste de velocidade zero
 #define TIME_CONTROLLER         5   //ms, periodo de acionamento do controlador
-#define Sd                  -10.0   //polo desejado
+#define Sd                  -20.0   //polo desejado
 
 /*************************************************************************************/
 /********************************** PIN MAP ******************************************/
