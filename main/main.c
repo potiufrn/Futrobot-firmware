@@ -112,7 +112,9 @@ void app_main()
   }
 }
 //***************************************************************************************
-//this function costs about ?us
+// 240Mhz ~= 26us
+// 160Mhz ~= 38.5us
+// 80Mhz  ~= 77us
 static void IRAM_ATTR isr_EncoderLeft(void *arg)
 {
   static const int8_t lookup_table[] = {0, 1, -1, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 1, -1, 0};
@@ -162,7 +164,9 @@ static void IRAM_ATTR isr_EncoderLeft(void *arg)
   xQueueSendFromISR(from_encoder_queue[LEFT], &mydata, 0);
   prevTime[ch] = currentTime[ch];
 }
-//this function costs about ?us
+// 240Mhz ~= 26us
+// 160Mhz ~= 38.5us
+// 80Mhz  ~= 77us
 static void IRAM_ATTR isr_EncoderRight(void *arg)
 {
   static encoder_data_t mydata = {.rawOmega = 0.0,
@@ -216,6 +220,7 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
   prevTime[ch] = currentTime[ch];
 }
 
+// A rotina esta gastando no pior caso 0.4ms, fora o delay que controla o tempo de amostragem
 static void
 periodic_controller()
 {
@@ -307,7 +312,7 @@ func_identify(const uint8_t motor, const uint8_t controller,
   // send sensor datas
   for (int i = 0; i < size; i++)
   {
-    vTaskDelay(20 / portTICK_PERIOD_MS);
+    vTaskDelay(50 / portTICK_PERIOD_MS);
     esp_spp_write(bt_handle, sizeof(export_data_t), (void *)&out[i]);
   }
   free(out);
