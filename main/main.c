@@ -112,6 +112,21 @@ void app_main()
   }
 }
 //***************************************************************************************
+// TODO:
+// * Trocar prevTime para uint64_t
+// * usar gettimeoftoday no lugar do esp_timer_get_time()
+// * usar DEFINES para setar as variaveis do filtro: p0, r e q
+// * Tentar usar ambas as bordas de subida e descida das interrupções
+
+// Para uma velocidade de 4000 rad/s:
+// Com 6 interrupcoes por canal: f ~= 3800 Hz => T ~= 261.8 us
+// Com 3 interrupcoes por canal: f ~= 1900 Hz => T ~= 523,6 us
+
+// Precisao do timer de alta precisão: 
+// até 1 us (usando um gettimeoftoday)
+// O esp_timer_get_time utiliza o mesmo hardware para contagem do tempo, porém gasta
+// um pouco mais de tempo fazendo conversões e retornando o valor por uma variavel temporaria
+
 // 240Mhz ~= 26us
 // 160Mhz ~= 38.5us
 // 80Mhz  ~= 77us
@@ -295,7 +310,7 @@ func_identify(const uint8_t motor, const uint8_t controller,
 
   // Coleta dados
   reference[motor] = setpoint;
-  uint32_t startTime = esp_timer_get_time();
+  uint64_t startTime = esp_timer_get_time();
   for (int i = 0; i < size; i++)
   {
     out[i].dt = (esp_timer_get_time() - startTime) / 1000000.0;
