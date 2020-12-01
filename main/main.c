@@ -232,9 +232,10 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
     return;
   }
 
+  
   //medição
   mydata.rawOmega = k * (double)lookup_table[enc_v & 0b1111] / dt;
-
+  
   //predição
   mydata.pOmega = mydata.omega + (input.wss - mydata.omega) * (1.0 - exp(-dt / input.tau));
   mydata.p += q;
@@ -243,7 +244,7 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
   mydata.kGain = mydata.p / (mydata.p + mydata.r);
   mydata.omega = mydata.pOmega + mydata.kGain * (mydata.rawOmega - mydata.pOmega);
   mydata.p = (1.0 - mydata.kGain) * mydata.p;
-
+  
   xQueueSendFromISR(from_encoder_queue[RIGHT], &mydata, 0);
   prevTime[ch] = currentTime[ch];
 }
@@ -344,8 +345,8 @@ func_identify(const uint8_t motor, const uint8_t controller,
   {
     vTaskDelay(5 / portTICK_PERIOD_MS);
     esp_spp_write(bt_handle, sizeof(export_data_t), (void *)&out[i]);
-    if((qtd++ % 50) == 0)
-      vTaskDelay(50 / portTICK_PERIOD_MS);
+    if((qtd++ % 10) == 0)
+      vTaskDelay(100 / portTICK_PERIOD_MS);
   }
   free(out);
 

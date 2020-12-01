@@ -48,8 +48,9 @@
 //Debug, information
 #include "esp_log.h" //ESP_LOGx (ESP_LOGI, ESP_LOGE, ESP_LOGW)
 
-#define DEVICE_NAME "ESP_ROBO_TEST"
-// #define DEVICE_NAME "ESP_ROBO_1"
+// #define DEVICE_NAME "ESP_ROBO_TEST"
+// #define DEVICE_NAME "ESP_ROBO_0"
+#define DEVICE_NAME "ESP_ROBO_1"
 // #define DEVICE_NAME "ESP_ROBO_2"
 // #define DEVICE_NAME "ESP_ROBO_4"
 
