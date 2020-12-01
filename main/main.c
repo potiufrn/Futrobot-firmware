@@ -1,4 +1,10 @@
 #include "common.h"
+
+// Parametros/variaveis do filtro de Kalman
+#define P0 60.0
+#define R 1200.0
+#define Q 10.0
+
 /****************************** VARIAVEIS GLOBAIS ************************************/
 // typedef struct
 // {
@@ -133,22 +139,26 @@ void app_main()
 static void IRAM_ATTR isr_EncoderLeft(void *arg)
 {
   static const int8_t lookup_table[] = {0, 1, -1, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 1, -1, 0};
-  static const double k = 2.0 * M_PI / 3.0, q = 10.0;
+  static const double k = 2.0 * M_PI / 3.0, q = Q;
   static input_encoder_t input = {0.0, 99999.0}; //Wss, tau
   static uint8_t enc_v = 0, ch = 0;
-  static uint32_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0};
+  static int64_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0};
   static double dt = 0.0;
   static encoder_data_t mydata = {.rawOmega = 0.0,
                                   .omega = 0.0,
                                   .pOmega = 0.0,
                                   .kGain = 0.0,
-                                  .p = 60.0,
-                                  .r = 1200.0}; //raw, filtered, predicted, gain, p
+                                  .p = P0,
+                                  .r = R}; //raw, filtered, predicted, gain, p
+  static struct timeval tv_now;
+
   enc_v <<= 2;
   enc_v |= (REG_READ(GPIO_IN1_REG) >> (GPIO_OUTB_LEFT - 32)) & 0b0011;
-
+  
   ch = ((uint32_t)arg) & 0b1;
-  currentTime[ch] = esp_timer_get_time();
+  
+  gettimeofday(&tv_now, NULL);
+  currentTime[ch] = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
   if (prevTime[ch] == 0)
   {
     prevTime[ch] = currentTime[ch];
@@ -188,14 +198,16 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
                                   .omega = 0.0,
                                   .pOmega = 0.0,
                                   .kGain = 0.0,
-                                  .p = 60.0,
-                                  .r = 1200.0}; //raw, filtered, predicted, gain, p
+                                  .p = P0,
+                                  .r = R}; //raw, filtered, predicted, gain, p
   static const int8_t lookup_table[] = {0, -1, 1, 0, 0, 0, 0, -1, 0, 0, 0, 1, 0, -1, 1, 0};
-  static const double k = 2.0 * M_PI / 3.0, q = 10.0;
+  static const double k = 2.0 * M_PI / 3.0, q = Q;
   static input_encoder_t input = {0.0, 99999.0}; //Wss, tau
   static uint8_t enc_v = 0, ch = 0;
-  static uint32_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0}, reg_read;
+  static int64_t prevTime[2] = {0.0, 0.0}, currentTime[2] = {0, 0};
+  static uint32_t reg_read = 0;
   static double dt = 0.0;
+  static struct timeval tv_now;
 
   enc_v <<= 2;
   reg_read = REG_READ(GPIO_IN_REG);
@@ -203,7 +215,8 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
   enc_v |= (reg_read & LS(GPIO_OUTB_RIGHT)) >> GPIO_OUTB_RIGHT;
 
   ch = ((uint32_t)arg) & 0b1;
-  currentTime[ch] = esp_timer_get_time();
+  gettimeofday(&tv_now, NULL);
+  currentTime[ch] = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
   if (prevTime[ch] == 0)
   {
     prevTime[ch] = currentTime[ch];
@@ -302,7 +315,7 @@ func_identify(const uint8_t motor, const uint8_t controller,
 {
   ESP_LOGI("Identify", "Iniciada...");
 
-  memset(reference, 0, 2 * sizeof(float));
+  reference[motor] = 0;
   bypass_controller = !controller;
 
   uint16_t size = stopTime / ((TIME_CONTROLLER/2.0) / 1000.0);
@@ -325,11 +338,14 @@ func_identify(const uint8_t motor, const uint8_t controller,
   // send size
   esp_spp_write(bt_handle, sizeof(uint16_t), (void *)&size);
   
+  int qtd = 0;
   // send sensor datas
   for (int i = 0; i < size; i++)
   {
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(5 / portTICK_PERIOD_MS);
     esp_spp_write(bt_handle, sizeof(export_data_t), (void *)&out[i]);
+    if((qtd++ % 50) == 0)
+      vTaskDelay(50 / portTICK_PERIOD_MS);
   }
   free(out);
 
