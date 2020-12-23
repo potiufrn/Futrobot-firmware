@@ -299,7 +299,7 @@ periodic_controller()
       }
       else
       {
-        pwm[motor] = saturator(reference[motor]);
+        pwm[motor] = saturator(reference[motor]) + 0.05859375;
       }
       // datas_to_enc[motor].wss = pwm[motor] * (1.0 - fabs(DEAD_ZONE))/ANG_COEF;
       datas_to_enc[motor].wss = pwm[motor] * mem.params[motor].K;
