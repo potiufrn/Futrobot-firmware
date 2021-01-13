@@ -304,7 +304,7 @@ periodic_controller()
         //saturator
         pwm[motor] = pTerm[motor] + iTerm[motor] + fTerm[motor];
         //anti-windup
-        if(pwm[motor] > 1.0)
+        if(abs(pwm[motor]) > 1.0)
           integral[motor] = 0;
         pwm[motor] = saturator(pwm[motor]);
       }
