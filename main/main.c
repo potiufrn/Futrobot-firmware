@@ -254,11 +254,15 @@ static void
 periodic_controller()
 {
   input_encoder_t datas_to_enc[2] = {{0.0, 0.2}, {0.0, 0.2}};
-  double erro[2];
+  double error[2] = {0.0,0.0}, integral[2] = {0.0,0.0};
   double omegaRef[2];
   float pwm[2] = {0.0, 0.0};
   uint16_t countVelZero[2] = {1, 1}; //numero de contagem equivalente a 500ms no ciclo do controle
   uint8_t motor;
+  double ki = 0.00001;
+  double pTerm[motor];
+  double iTerm[motor];
+  double fTerm[motor];
 
   while (1)
   {
@@ -282,19 +286,26 @@ periodic_controller()
     }
 #define ANG_COEF mem.params[motor].coef[SENSE(reference[motor])].ang
 #define DEAD_ZONE mem.params[motor].coef[SENSE(reference[motor])].lin *(!!reference[motor])
+#define Kp (mem.params[motor].Kp[SENSE(reference[motor])])
     //Controlador
     for (motor = 0; motor < 2; motor++)
     {
       if (bypass_controller == false)
       {
         omegaRef[motor] = reference[motor] * mem.omegaMax;
-        erro[motor] = omegaRef[motor] - enc_datas[motor].omega;    // rad/s [-omegaMaximo, omegaMaximo]
-        // erro[motor] = omegaRef[motor] - enc_datas[motor].rawOmega; // rad/s [-omegaMaximo, omegaMaximo]
+        error[motor] = omegaRef[motor] - enc_datas[motor].omega;    // rad/s [-omegaMaximo, omegaMaximo]
+        integral[motor] += error[motor]*TIME_CONTROLLER;
         //Ação proporcional
-        pwm[motor] = erro[motor] * mem.params[motor].Kp[SENSE(reference[motor])];
-        //Forward
-        pwm[motor] += ANG_COEF * omegaRef[motor] + DEAD_ZONE;
+        pTerm[motor] = Kp*error[motor]
+        //Ação integral
+        iTerm[motor] = ki*integral[motor];
+        // FeedForward
+        fTerm[motor] = ANG_COEF * omegaRef[motor] + DEAD_ZONE;
         //saturator
+        pwm[motor] = pTerm[motor] + iTerm[motor] + fTerm[motor];
+        //anti-windup
+        if(pwm[motor] > 1.0)
+          integral[motor] = 0;
         pwm[motor] = saturator(pwm[motor]);
       }
       else
