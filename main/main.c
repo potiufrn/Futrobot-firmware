@@ -253,6 +253,7 @@ static void IRAM_ATTR isr_EncoderRight(void *arg)
 static void
 periodic_controller()
 {
+  #define ZERO_ERROR (0.1)
   input_encoder_t datas_to_enc[2] = {{0.0, 0.2}, {0.0, 0.2}};
   double error[2] = {0.0,0.0}, integral[2] = {0.0,0.0};
   double omegaRef[2];
@@ -302,8 +303,8 @@ periodic_controller()
         // FeedForward
         fTerm[motor] = ANG_COEF * omegaRef[motor] + DEAD_ZONE;
         pwm[motor] = pTerm[motor] + iTerm[motor] + fTerm[motor];
-        //anti-windup
-        if(abs(pwm[motor]) > 1.0)
+        //anti-windup e erro zero
+        if((abs(pwm[motor]) > 1.0) || (error[motor] < ZERO_ERROR))
           integral[motor] = 0;
         //saturator
         pwm[motor] = saturator(pwm[motor]);
