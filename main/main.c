@@ -260,9 +260,9 @@ periodic_controller()
   uint16_t countVelZero[2] = {1, 1}; //numero de contagem equivalente a 500ms no ciclo do controle
   uint8_t motor;
   double ki = 0.00001;
-  double pTerm[motor];
-  double iTerm[motor];
-  double fTerm[motor];
+  double pTerm[2];
+  double iTerm[2];
+  double fTerm[2];
 
   while (1)
   {
@@ -286,7 +286,7 @@ periodic_controller()
     }
 #define ANG_COEF mem.params[motor].coef[SENSE(reference[motor])].ang
 #define DEAD_ZONE mem.params[motor].coef[SENSE(reference[motor])].lin *(!!reference[motor])
-#define Kp mem.params[motor].Kp[SENSE(reference[motor])]
+#define kp mem.params[motor].Kp[SENSE(reference[motor])]
     //Controlador
     for (motor = 0; motor < 2; motor++)
     {
@@ -296,7 +296,7 @@ periodic_controller()
         error[motor] = omegaRef[motor] - enc_datas[motor].omega;    // rad/s [-omegaMaximo, omegaMaximo]
         integral[motor] += error[motor]*TIME_CONTROLLER;
         //Ação proporcional
-        pTerm[motor] = Kp*error[motor];
+        pTerm[motor] = kp*error[motor];
         //Ação integral
         iTerm[motor] = ki*integral[motor];
         // FeedForward
