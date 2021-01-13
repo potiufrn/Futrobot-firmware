@@ -286,7 +286,7 @@ periodic_controller()
       }
     }
 #define ANG_COEF mem.params[motor].coef[SENSE(reference[motor])].ang
-#define DEAD_ZONE mem.params[motor].coef[SENSE(reference[motor])].lin *(!!reference[motor])
+#define DEAD_ZONE mem.params[motor].coef[SENSE(reference[motor])].lin
 #define kp mem.params[motor].Kp[SENSE(reference[motor])]
     //Controlador
     for (motor = 0; motor < 2; motor++)
@@ -302,7 +302,7 @@ periodic_controller()
         iTerm[motor] = ki*integral[motor];
         // FeedForward
         fTerm[motor] = ANG_COEF * omegaRef[motor] + DEAD_ZONE;
-        pwm[motor] = pTerm[motor] + iTerm[motor] + fTerm[motor];
+        pwm[motor] = pTerm[motor] + (iTerm[motor] + fTerm[motor])*(!!reference[motor]); // "desliga" iTerm e fTerm para ref. zero
         //anti-windup e erro zero
         if((abs(pwm[motor]) > 1.0) || (error[motor] < ZERO_ERROR))
           integral[motor] = 0;
