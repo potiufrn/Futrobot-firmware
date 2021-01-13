@@ -286,7 +286,7 @@ periodic_controller()
     }
 #define ANG_COEF mem.params[motor].coef[SENSE(reference[motor])].ang
 #define DEAD_ZONE mem.params[motor].coef[SENSE(reference[motor])].lin *(!!reference[motor])
-#define Kp (mem.params[motor].Kp[SENSE(reference[motor])])
+#define Kp mem.params[motor].Kp[SENSE(reference[motor])]
     //Controlador
     for (motor = 0; motor < 2; motor++)
     {
@@ -296,16 +296,16 @@ periodic_controller()
         error[motor] = omegaRef[motor] - enc_datas[motor].omega;    // rad/s [-omegaMaximo, omegaMaximo]
         integral[motor] += error[motor]*TIME_CONTROLLER;
         //Ação proporcional
-        pTerm[motor] = Kp*error[motor]
+        pTerm[motor] = Kp*error[motor];
         //Ação integral
         iTerm[motor] = ki*integral[motor];
         // FeedForward
         fTerm[motor] = ANG_COEF * omegaRef[motor] + DEAD_ZONE;
-        //saturator
         pwm[motor] = pTerm[motor] + iTerm[motor] + fTerm[motor];
         //anti-windup
         if(abs(pwm[motor]) > 1.0)
           integral[motor] = 0;
+        //saturator
         pwm[motor] = saturator(pwm[motor]);
       }
       else
