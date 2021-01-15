@@ -260,7 +260,7 @@ periodic_controller()
   float pwm[2] = {0.0, 0.0};
   uint16_t countVelZero[2] = {1, 1}; //numero de contagem equivalente a 500ms no ciclo do controle
   uint8_t motor;
-  double ki = 0.00001;
+  double ki = 0.0;
   double pTerm[2];
   double iTerm[2];
   double fTerm[2];
@@ -303,9 +303,11 @@ periodic_controller()
         // FeedForward
         fTerm[motor] = ANG_COEF * omegaRef[motor] + DEAD_ZONE;
         pwm[motor] = pTerm[motor] + (iTerm[motor] + fTerm[motor])*(!!reference[motor]); // "desliga" iTerm e fTerm para ref. zero
-        //anti-windup e erro zero
-        if((abs(pwm[motor]) > 1.0) || (error[motor] < ZERO_ERROR))
+        //anti-windup
+        if((fabs(pwm[motor]) > 1.0))
           integral[motor] = 0;
+        // if((fabs(pwm[motor]) > 1.0) || (fabs(error[motor]) < ZERO_ERROR))
+        //   integral[motor] = 0;
         //saturator
         pwm[motor] = saturator(pwm[motor]);
       }
