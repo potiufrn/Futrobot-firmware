@@ -295,7 +295,7 @@ periodic_controller()
       {
         omegaRef[motor] = reference[motor] * mem.omegaMax;
         error[motor] = omegaRef[motor] - enc_datas[motor].omega;    // rad/s [-omegaMaximo, omegaMaximo]
-        integral[motor] += error[motor]*TIME_CONTROLLER;
+        integral[motor] += error[motor]*(TIME_CONTROLLER/1000.0);
         //Ação proporcional
         pTerm[motor] = kp*error[motor];
         //Ação integral
@@ -305,7 +305,7 @@ periodic_controller()
         pwm[motor] = pTerm[motor] + (iTerm[motor] + fTerm[motor])*(!!reference[motor]); // "desliga" iTerm e fTerm para ref. zero
         //anti-windup
         if((fabs(pwm[motor]) > 1.0))
-          integral[motor] = 0;
+          integral[motor] = 0.0;
         // if((fabs(pwm[motor]) > 1.0) || (fabs(error[motor]) < ZERO_ERROR))
         //   integral[motor] = 0;
         //saturator
