@@ -63,17 +63,20 @@ void app_main()
   //controlador no nucleo 1
 
   xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 4, NULL, 1);
-  // xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 5, LEFT, 1);
-  // xTaskCreatePinnedToCore(periodic_controller, "periodic_controller", 2048, NULL, 5, RIGHT, 1);
 
   uint8_t head, cmd;
-  while (1)
+  while (true)
   {
     xQueueReceive(bt_queue, &btdata, portMAX_DELAY);
     head = btdata.data[0] & 0xF0;
+    
+    // ESP_LOGI("POTI_INFO", "comando recebido!");
+    
     if (head != CMD_HEAD)
       continue;
     cmd = btdata.data[0] & 0x0F;
+    
+    // ESP_LOGI("POTI_INFO", "Comando valido!");
 
     // Ações
     switch (cmd)
@@ -88,9 +91,23 @@ void app_main()
       decodeFloat(btdata.data, &reference[LEFT], &reference[RIGHT]);
       func_controlSignal(reference[LEFT], reference[RIGHT]);
       break;
+    case CMD_SET_KI:
+    {
+      float ki = *(float *)&btdata.data[1];
+      mem.params[0].Ki = ki;
+      mem.params[1].Ki = ki;
+      
+      ESP_LOGI("POTI_INFO", "Ki recebido = %.12f", ki);
+      
+      esp_err_t err = save_parameters(&mem);
+      if (err != ESP_OK)
+        ESP_LOGI("POTI_ERRO", "Falha ao salvar os parametros, erro:%s", esp_err_to_name(err));
+      break;
+    }
     case CMD_PING:
       esp_spp_write(bt_handle, btdata.len, btdata.data);
       break;
+
     case CMD_IDENTIFY:
     {
       uint8_t motor = btdata.data[1];
@@ -260,7 +277,6 @@ periodic_controller()
   float pwm[2] = {0.0, 0.0};
   uint16_t countVelZero[2] = {1, 1}; //numero de contagem equivalente a 500ms no ciclo do controle
   uint8_t motor;
-  double ki = 0.0;
   double pTerm[2];
   double iTerm[2];
   double fTerm[2];
@@ -288,6 +304,7 @@ periodic_controller()
 #define ANG_COEF mem.params[motor].coef[SENSE(reference[motor])].ang
 #define DEAD_ZONE mem.params[motor].coef[SENSE(reference[motor])].lin
 #define kp mem.params[motor].Kp[SENSE(reference[motor])]
+#define ki mem.params[motor].Ki
     //Controlador
     for (motor = 0; motor < 2; motor++)
     {

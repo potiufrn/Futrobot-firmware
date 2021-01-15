@@ -67,6 +67,7 @@
 
 #define CMD_REF            0x0A
 #define CMD_CONTROL_SIGNAL 0x0B
+#define CMD_SET_KI         0x0C
 
 #define CMD_RESET          0x0E
 #define CMD_PING           0x0F
@@ -167,6 +168,7 @@ typedef struct
   double tau;    //Constante de tempo do sistema
   // Controlador Proporcional e Forward
   double Kp[2];  //Ganho do controlador proporcional, para cada sentido
+  double Ki;  //Ganho do controlador proporcional, para cada sentido
   // Coef. Angular == 1/K
   // Coef. Linear  == Zona morta
   coefLine_t coef[2];// Coef. das retas Omega x PWM para cada sentido de rotação
